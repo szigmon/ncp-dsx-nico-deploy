@@ -262,7 +262,11 @@ machine-a-tron-status:
 VENDOR_PATCH := patches/vendor/infra-controller.patch
 
 patch-vendor:
-	git submodule update --init
+	@if git rev-parse --git-dir >/dev/null 2>&1; then \
+		git submodule update --init; \
+	else \
+		echo "No git repo — assuming $(UPSTREAM) already checked out"; \
+	fi
 	@cd $(UPSTREAM) && \
 	if git apply --reverse --check $(CURDIR)/$(VENDOR_PATCH) >/dev/null 2>&1; then \
 		echo "Vendor patch already applied"; \
@@ -274,9 +278,7 @@ patch-vendor:
 		exit 1; \
 	fi
 
-helm-dep-build:
-	git submodule update --init
-	$(MAKE) patch-vendor
+helm-dep-build: patch-vendor
 	helm repo add temporal https://go.temporal.io/helm-charts --force-update
 	helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
 	helm repo add nats https://nats-io.github.io/k8s/helm/charts/ --force-update
