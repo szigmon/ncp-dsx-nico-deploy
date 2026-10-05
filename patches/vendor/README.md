@@ -28,8 +28,9 @@ chart (already neutralized by
 standalone `deploy-flow` target (removed — Flow ships inside `nico-core`).
 Upstream it to NVIDIA/infra-controller when possible.
 
-Applied automatically by `make patch-vendor` (wired into `helm-dep-build` and
-`deploy-site`). The target is idempotent: it detects an already-applied patch
-(`git apply --reverse --check`) and fails loudly if the submodule commit has
+Applied automatically by `make patch-vendor` (a shared prerequisite of
+`helm-dep-build`, `deploy-cloud`, and `deploy-site`). The target is
+idempotent: it detects an already-applied patch (`git apply --reverse --check`)
+and fails loudly if the submodule commit has
 moved so the patch no longer applies cleanly — rebase the patch onto the new
 commit or update the submodule pin.

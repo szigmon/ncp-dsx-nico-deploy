@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# The nico-dns external (LoadBalancer) Services hardcode targetPort 53, but
+# nico-dns binds :5353 (can't bind privileged :53, see nico-core.yaml). Point
+# the VIP's targetPort at the real listener. JSON patch; applied to both the
+# -external-udp-0 and -external-tcp-0 Services (single DNS replica on SNO).
+- op: replace
+  path: /spec/ports/0/targetPort
+  value: 5353

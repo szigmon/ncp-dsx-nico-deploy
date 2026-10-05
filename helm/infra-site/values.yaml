@@ -242,3 +242,26 @@ nico-rest-common:
     create: true
     temporalEncryptionKey:
       value: ""
+
+# =============================================================================
+# MetalLB — LoadBalancer VIP for NICo provisioning services on the dataplane
+# VLAN. Operator/CRDs come from the prereqs chart. L2 mode: the VIP shares the
+# dataplane NIC's L2 segment (VLAN 712, 10.6.145.0/24). Replace addresses/
+# interfaces per real site.
+# =============================================================================
+metallb:
+  enabled: true
+  namespace: metallb-system
+  poolName: nico-dataplane-vip
+  addresses:
+    - 10.6.145.100/32
+  interfaces:
+    - enp3s0
+
+# Static IP on the dataplane NIC (NodeNetworkConfigurationPolicy via
+# kubernetes-nmstate) so MetalLB can ARP the VIP on that VLAN.
+nodeNetwork:
+  enabled: true
+  interface: enp3s0
+  address: 10.6.145.2
+  prefixLength: 24

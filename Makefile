@@ -128,16 +128,17 @@ check-prereqs:
 # via the Assisted Installer, plus LVM Storage so a default StorageClass
 # exists. Self-contained in cluster/bootstrap.sh — a trimmed SNO-only
 # extraction of the rh-ecosystem-edge/openshift-dpf cluster chain; nothing
-# DPU/DPF-related runs. Idempotent: an already-installed cluster just
-# (re)downloads its kubeconfig.
+# DPU/DPF-related runs. An already-installed cluster refreshes its
+# credentials and LVMS without creating a VM.
 #
 # Required: NICO_BASE_DOMAIN, NICO_API_IP (node IP; DNS for
 # api.<name>.<domain> and *.apps.<name>.<domain> must resolve to it),
 # NICO_GW, NICO_DNS. All other NICO_* vars (name, version, pull secret,
 # netmask, VM sizing, bridge) have defaults in cluster/bootstrap.sh —
-# empty values passed here fall through to those defaults.
-# Host prerequisites: authenticated aicli, libvirt (virt-install), and a
-# bridge (default mgmt-br) on the network that hosts NICO_API_IP.
+# empty values passed here fall through to those defaults. An installed
+# cluster needs only its name; libvirt/network settings apply to VM creation.
+# Host prerequisites: authenticated aicli and oc; fresh installs also need
+# libvirt (virt-install) and a bridge on the network that hosts NICO_API_IP.
 
 bootstrap-cluster:
 	@bash cluster/bootstrap.sh install \
@@ -149,7 +150,12 @@ bootstrap-cluster:
 		NICO_NETMASK='$(NICO_NETMASK)' \
 		NICO_OPENSHIFT_VERSION='$(NICO_OPENSHIFT_VERSION)' \
 		NICO_PULL_SECRET='$(NICO_PULL_SECRET)' \
-		NICO_VM_PREFIX='$(NICO_VM_PREFIX)'
+		NICO_VM_PREFIX='$(NICO_VM_PREFIX)' \
+		NICO_BRIDGE='$(NICO_BRIDGE)' \
+		NICO_EXTRA_NETWORKS='$(NICO_EXTRA_NETWORKS)' \
+		NICO_EXTRA_BRIDGES='$(NICO_EXTRA_BRIDGES)' \
+		NICO_LOCAL_GATEWAY='$(NICO_LOCAL_GATEWAY)' \
+		NICO_DISK_PATH='$(NICO_DISK_PATH)'
 
 bootstrap-clean:
 	@bash cluster/bootstrap.sh clean \
@@ -259,6 +265,7 @@ machine-a-tron-status:
 # pre-install hook templates are fixed with a git patch instead. See
 # patches/vendor/README.md. Idempotent: skips if already applied, fails
 # loudly if the submodule commit moved so the patch no longer applies.
+# Shared prerequisites prevent concurrent patch attempts under make -j.
 VENDOR_PATCH := patches/vendor/infra-controller.patch
 
 patch-vendor:
@@ -334,7 +341,7 @@ deploy-cloud-infra: helm-dep-build
 		--set nico-rest-common.secrets.keycloakClientSecret.value="$(KEYCLOAK_CLIENT_SECRET)" \
 		--post-renderer $(POST_RENDERER) --post-renderer-args $(INFRA_CLOUD_KUSTOMIZE)
 
-deploy-cloud:
+deploy-cloud: patch-vendor
 	helm upgrade --install -n nico-rest nico-rest \
 		$(NICO_REST_CHART) --wait --timeout 10m \
 		-f helm/values/nico-rest.yaml \
@@ -621,7 +628,10 @@ endif
 # nico-core umbrella chart (values: nico-flow.enabled=true), so installing it
 # separately collides on the namespace and the `flow` ServiceAccount.
 
-deploy-all-site: deploy-site-infra vault-init deploy-site
+deploy-all-site:
+	$(MAKE) deploy-site-infra
+	$(MAKE) vault-init
+	$(MAKE) deploy-site
 
 # =============================================================================
 # CRC (single-node) — overrides for local development on CodeReady Containers
@@ -643,8 +653,15 @@ deploy-site-infra-crc: helm-dep-build
 		--create-namespace --wait --timeout 15m \
 		$(CRC_VAULT_OVERRIDES)
 
-deploy-all-cloud-crc: deploy-prereqs deploy-cloud-infra-crc deploy-cloud
-deploy-all-site-crc: deploy-site-infra-crc vault-init deploy-site
+deploy-all-cloud-crc:
+	$(MAKE) deploy-prereqs
+	$(MAKE) deploy-cloud-infra-crc
+	$(MAKE) deploy-cloud
+
+deploy-all-site-crc:
+	$(MAKE) deploy-site-infra-crc
+	$(MAKE) vault-init
+	$(MAKE) deploy-site
 
 # =============================================================================
 # Status and Cleanup

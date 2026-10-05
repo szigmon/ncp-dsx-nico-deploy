@@ -1,0 +1,143 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# =============================================================================
+# Production-style site-config overlay for the upstream Core nico chart.
+#
+# Layered on top of helm/values/nico-core.yaml
+# (helm -f nico-core.yaml -f nico-core-site.yaml ...).
+#
+# Supplies the resource pools and network segments the Core API requires to
+# start (crates/api-core/src/setup.rs rejects a config with no pools). Unlike
+# helm/values/nico-core-mat.yaml, this overlay does NOT enable any RBAC or
+# attestation bypasses — bypass_rbac / permissive_mode / allow_insecure_discovery
+# are intentionally absent, and attestation_enabled / tpm_required keep their
+# secure defaults. Real security enforcement stays on.
+#
+# The prefixes/ranges below are valid RFC 1918 / private placeholders so the API
+# comes up on a cluster with no bare-metal hardware attached. Adjust them to the
+# real site's addressing before onboarding actual machines.
+# =============================================================================
+
+nico-api:
+  siteConfig:
+    enabled: true
+    nicoApiSiteConfig: |
+      initial_domain_name = "nico.local"
+
+      # Network segments. Required so host-discovery requests resolve to a
+      # segment. Placeholder RFC 1918 ranges — replace per real site.
+      [networks.oob]
+      type = "underlay"
+      prefix = "192.168.2.0/24"
+      gateway = "192.168.2.1"
+      mtu = 1500
+      reserve_first = 10
+
+      [networks.admin]
+      type = "admin"
+      prefix = "192.168.252.0/24"
+      gateway = "192.168.252.1"
+      mtu = 9000
+      reserve_first = 10
+
+      [networks.hostinband]
+      type = "hostinband"
+      prefix = "192.168.253.0/24"
+      gateway = "192.168.253.1"
+      mtu = 9000
+      reserve_first = 10
+
+      # Resource pools. Required for the API to start and for tenant/VPC
+      # allocation. Ranges are generic private/site-scoped values.
+      [pools.lo-ip]
+      type = "ipv4"
+      ranges = [{ start = "10.100.0.1", end = "10.100.0.254" }]
+
+      [pools.vpc-dpu-lo]
+      type = "ipv4"
+      ranges = [{ start = "10.101.0.1", end = "10.101.0.254" }]
+
+      [pools.secondary-vtep-ip]
+      type = "ipv4"
+      ranges = [{ start = "10.102.0.1", end = "10.102.0.254" }]
+
+      [pools.vni]
+      type = "integer"
+      ranges = [{ start = "100000", end = "199999" }]
+
+      [pools.vpc-vni]
+      type = "integer"
+      ranges = [{ start = "200000", end = "299999" }]
+
+      [pools.external-vpc-vni]
+      type = "integer"
+      ranges = [{ start = "300000", end = "399999" }]
+
+      [pools.vlan-id]
+      type = "integer"
+      ranges = [{ start = "100", end = "4094" }]
+
+      [pools.fnn-asn]
+      type = "integer"
+      ranges = [{ start = "4200000000", end = "4200000254" }]
+
+  # Expose the Core gRPC API on the shared dataplane VIP. DPU/host agents dial
+  # it directly; operators still use the cloud-side Route. externalTrafficPolicy
+  # null -> omitted -> defaults to Cluster, required to share one VIP.
+  externalService:
+    enabled: true
+    externalTrafficPolicy: null
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
+      metallb.universe.tf/allow-shared-ip: "nico-site-vip"
+  # IP SAN so DPU/host agents dialing the API by the VIP over TLS pass cert
+  # validation; without it direct-IP gRPC to 10.6.145.100 fails BadCertificate.
+  certificate:
+    ipAddresses:
+      - "10.6.145.100"
+
+# =============================================================================
+# Shared dataplane VIP (10.6.145.100, VLAN 712) for provisioning services.
+# DHCP is intentionally NOT enabled here — pending the DHCP-relay decision for
+# VLAN 712. All five share one VIP via allow-shared-ip (non-overlapping ports).
+# =============================================================================
+nico-pxe:
+  externalService:
+    enabled: true
+    externalTrafficPolicy: null
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
+      metallb.universe.tf/allow-shared-ip: "nico-site-vip"
+
+nico-dns:
+  externalService:
+    enabled: true
+    perPodAnnotations:
+      - metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
+        metallb.universe.tf/allow-shared-ip: "nico-site-vip"
+
+nico-ssh-console-rs:
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
+      metallb.universe.tf/allow-shared-ip: "nico-site-vip"
+
+# nico-dhcp runs behind the shared VIP like the other services (per upstream
+# docs: switches relay DHCP to the nico-dhcp LoadBalancer VIP — it is NOT
+# hostNetwork). Needs a DHCP relay -> 10.6.145.100 on the DPU/BMC network SVI to
+# actually receive broadcasts; the DPU serves the host in-band overlay itself.
+# hookParameters advertise DNS/PXE/NTP to booting clients -> the dataplane VIP.
+nico-dhcp:
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
+      metallb.universe.tf/allow-shared-ip: "nico-site-vip"
+  config:
+    kea:
+      hookParameters:
+        nameservers: "10.6.145.100"
+        ntpServer: "10.6.145.100"
+        provisioningServer: "10.6.145.100"

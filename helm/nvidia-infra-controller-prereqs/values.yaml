@@ -33,5 +33,21 @@ externalSecrets:
   installPlanApproval: Automatic
   namespace: openshift-operators
 
+metallb:
+  enabled: true
+  channel: stable
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+  namespace: metallb-system
+
+nmstate:
+  enabled: true
+  channel: stable
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+  namespace: openshift-nmstate
+
 clusterIssuers:
   enabled: true

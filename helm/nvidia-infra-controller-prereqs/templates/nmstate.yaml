@@ -1,0 +1,47 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+kubernetes-nmstate operator — declarative node network config (NNCP) so the
+dataplane NIC gets a static IP for MetalLB L2 advertisement. The NMState
+operand CR is created by the wait-operators job once the operator CRD exists
+(same pattern as ExternalSecretsConfig), so helm --wait does not fail on a
+missing CRD at install time.
+*/}}
+
+{{- if .Values.nmstate.enabled }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.nmstate.namespace }}
+  labels:
+    {{- include "nvidia-infra-controller-prereqs.labels" . | nindent 4 }}
+  annotations:
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: kubernetes-nmstate-operator
+  namespace: {{ .Values.nmstate.namespace }}
+  labels:
+    {{- include "nvidia-infra-controller-prereqs.labels" . | nindent 4 }}
+  annotations:
+spec:
+  targetNamespaces:
+    - {{ .Values.nmstate.namespace }}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: kubernetes-nmstate-operator
+  namespace: {{ .Values.nmstate.namespace }}
+  labels:
+    {{- include "nvidia-infra-controller-prereqs.labels" . | nindent 4 }}
+  annotations:
+spec:
+  channel: {{ .Values.nmstate.channel }}
+  name: kubernetes-nmstate-operator
+  source: {{ .Values.nmstate.source }}
+  sourceNamespace: {{ .Values.nmstate.sourceNamespace }}
+  installPlanApproval: {{ .Values.nmstate.installPlanApproval }}
+{{- end }}

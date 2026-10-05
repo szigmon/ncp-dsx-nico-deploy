@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# The nico-ssh-console-rs external (LoadBalancer) Service hardcodes targetPort
+# 22, but the console binds :2222 (ambient-cap workaround, see nico-core.yaml).
+# Point the VIP's targetPort at the real listener. JSON patch.
+- op: replace
+  path: /spec/ports/0/targetPort
+  value: 2222

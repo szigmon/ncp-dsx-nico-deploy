@@ -13,5 +13,9 @@ helm/nico-temporal/Chart.lock
 helm/infra-cloud/charts/
 helm/infra-site/charts/
 *kubeconfig*
+/openshift_pull.json
+/cluster/kubeadmin-password.*
+/cluster/static_net.yaml
+/cluster/virt-install.log
 .idea
 *.tgz

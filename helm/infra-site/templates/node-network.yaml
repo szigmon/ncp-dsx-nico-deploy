@@ -1,0 +1,30 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+Static IP on the dataplane NIC so MetalLB can L2-advertise the VIP on that
+VLAN. No default route — this interface carries provisioning traffic only.
+Requires kubernetes-nmstate (installed by the prereqs chart); the
+wait-operators job gates on the NNCP CRD.
+*/}}
+
+{{- if .Values.nodeNetwork.enabled }}
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
+metadata:
+  name: nico-dataplane-{{ .Values.nodeNetwork.interface }}
+spec:
+  desiredState:
+    interfaces:
+      - name: {{ .Values.nodeNetwork.interface }}
+        type: ethernet
+        state: up
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: {{ .Values.nodeNetwork.address }}
+              prefix-length: {{ .Values.nodeNetwork.prefixLength }}
+        ipv6:
+          enabled: false
+{{- end }}
