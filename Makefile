@@ -41,6 +41,11 @@ MAT ?=
 # Override with SITE_VALUES=<file> for a site-specific config.
 SITE_VALUES ?= helm/values/nico-core-site.yaml
 SITE_CONFIG_FLAG := $(if $(MAT),-f $(MAT_VALUES),-f $(SITE_VALUES))
+# Per-site override files for the prereqs chart and infra-site chart (e.g. to
+# enable MetalLB/nmstate + supply the dataplane VIP). Empty = chart defaults
+# (MetalLB/nmstate off). See dataplane-vip.md.
+PREREQS_VALUES ?=
+SITE_INFRA_VALUES ?=
 
 # Vault topology auto-selection. HA (3-node Raft) needs >=3 schedulable nodes;
 # a single-node (SNO/VM) or 2-node cluster falls back to standalone Vault (file
@@ -332,6 +337,7 @@ helm-template: helm-dep-build
 deploy-prereqs:
 	helm upgrade --install -n default nvidia-infra-controller-prereqs \
 		helm/nvidia-infra-controller-prereqs/ \
+		$(if $(PREREQS_VALUES),-f $(PREREQS_VALUES)) \
 		--wait --timeout 15m
 
 deploy-cloud-infra: helm-dep-build
@@ -420,6 +426,7 @@ deploy-site-infra: helm-dep-build
 	helm upgrade --install -n nico-system nico-site-infra \
 		helm/infra-site/ \
 		--create-namespace --timeout 15m \
+		$(if $(SITE_INFRA_VALUES),-f $(SITE_INFRA_VALUES)) \
 		$(VAULT_OVERRIDES)
 
 vault-init:

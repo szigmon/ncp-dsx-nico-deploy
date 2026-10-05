@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Per-site infra-site override for the nico-lab SNO (VLAN 712, 10.6.145.0/24):
+# the MetalLB dataplane VIP and the static IP for the dataplane NIC.
+# Usage: make deploy-site-infra SITE_INFRA_VALUES=helm/values/infra-site-nico-lab.yaml
+metallb:
+  enabled: true
+  addresses:
+    - 10.6.145.100/32
+  interfaces:
+    - enp3s0
+
+nodeNetwork:
+  enabled: true
+  interface: enp3s0
+  address: 10.6.145.2
+  prefixLength: 24
