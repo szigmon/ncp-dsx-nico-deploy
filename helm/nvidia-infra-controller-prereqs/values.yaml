@@ -33,5 +33,23 @@ externalSecrets:
   installPlanApproval: Automatic
   namespace: openshift-operators
 
+# Off by default — only labs exposing services on a dedicated VLAN need these.
+# Enable per-site: deploy-prereqs PREREQS_VALUES=helm/values/prereqs-<lab>.yaml
+metallb:
+  enabled: false
+  channel: stable
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+  namespace: metallb-system
+
+nmstate:
+  enabled: false
+  channel: stable
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+  namespace: openshift-nmstate
+
 clusterIssuers:
   enabled: true

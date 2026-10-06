@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Per-site prereqs override for the nico-lab SNO: enable the MetalLB and
+# kubernetes-nmstate operators (needed for the dataplane VIP on VLAN 712).
+# Usage: make deploy-prereqs PREREQS_VALUES=helm/values/prereqs-nico-lab.yaml
+metallb:
+  enabled: true
+nmstate:
+  enabled: true

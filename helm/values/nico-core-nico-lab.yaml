@@ -1,0 +1,129 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# =============================================================================
+# Production-style site-config overlay for the upstream Core nico chart.
+#
+# Layered on top of helm/values/nico-core.yaml
+# (helm -f nico-core.yaml -f nico-core-site.yaml ...).
+#
+# Supplies the resource pools and network segments the Core API requires to
+# start (crates/api-core/src/setup.rs rejects a config with no pools). Unlike
+# helm/values/nico-core-mat.yaml, this overlay does NOT enable any RBAC or
+# attestation bypasses — bypass_rbac / permissive_mode / allow_insecure_discovery
+# are intentionally absent, and attestation_enabled / tpm_required keep their
+# secure defaults. Real security enforcement stays on.
+#
+# The prefixes/ranges below are valid RFC 1918 / private placeholders so the API
+# comes up on a cluster with no bare-metal hardware attached. Adjust them to the
+# real site's addressing before onboarding actual machines.
+# =============================================================================
+
+nico-api:
+  siteConfig:
+    enabled: true
+    nicoApiSiteConfig: |
+      initial_domain_name = "nico.local"
+
+      # Network segments. Required so host-discovery requests resolve to a
+      # segment. Placeholder RFC 1918 ranges — replace per real site.
+      [networks.oob]
+      type = "underlay"
+      prefix = "192.168.2.0/24"
+      gateway = "192.168.2.1"
+      mtu = 1500
+      reserve_first = 10
+
+      [networks.admin]
+      type = "admin"
+      prefix = "192.168.252.0/24"
+      gateway = "192.168.252.1"
+      mtu = 9000
+      reserve_first = 10
+
+      [networks.hostinband]
+      type = "hostinband"
+      prefix = "192.168.253.0/24"
+      gateway = "192.168.253.1"
+      mtu = 9000
+      reserve_first = 10
+
+      # Resource pools. Required for the API to start and for tenant/VPC
+      # allocation. Ranges are generic private/site-scoped values.
+      [pools.lo-ip]
+      type = "ipv4"
+      ranges = [{ start = "10.100.0.1", end = "10.100.0.254" }]
+
+      [pools.vpc-dpu-lo]
+      type = "ipv4"
+      ranges = [{ start = "10.101.0.1", end = "10.101.0.254" }]
+
+      [pools.secondary-vtep-ip]
+      type = "ipv4"
+      ranges = [{ start = "10.102.0.1", end = "10.102.0.254" }]
+
+      [pools.vni]
+      type = "integer"
+      ranges = [{ start = "100000", end = "199999" }]
+
+      [pools.vpc-vni]
+      type = "integer"
+      ranges = [{ start = "200000", end = "299999" }]
+
+      [pools.external-vpc-vni]
+      type = "integer"
+      ranges = [{ start = "300000", end = "399999" }]
+
+      [pools.vlan-id]
+      type = "integer"
+      ranges = [{ start = "100", end = "4094" }]
+
+      [pools.fnn-asn]
+      type = "integer"
+      ranges = [{ start = "4200000000", end = "4200000254" }]
+
+  # Core gRPC API on its own dataplane LB IP. Agents dial the VIP by IP, so the
+  # cert carries an IP SAN. Operators use the cloud-side Route.
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
+  certificate:
+    ipAddresses:
+      - "10.6.145.100"
+
+# =============================================================================
+# Per-service dataplane LB IPs on VLAN 712 (pool 10.6.145.100-110): one IP per
+# service — nico-api .100, nico-pxe .101, nico-dns .102. nico-dns is the
+# client-facing DNS on its own VIP, non-privileged (:5353 behind a 53->5353
+# Service remap, see the kustomize patch). nico-dhcp and ssh-console are not
+# LB-exposed (DHCP served via switch relay / the DPU per site topology).
+#
+# unbound (the alosadagrande/hub0 pattern) is DISABLED here: it binds :53 and
+# uses ip-transparent, which this cluster's restricted runtime won't permit even
+# as root (needs CAP_NET_ADMIN). Enabling it needs a custom SCC — a follow-up
+# (see dataplane-vip.md). nico-dns covers DNS non-privileged in the meantime.
+# =============================================================================
+nico-pxe:
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "10.6.145.101"
+
+nico-dns:
+  externalService:
+    enabled: true
+    perPodAnnotations:
+      - metallb.universe.tf/loadBalancerIPs: "10.6.145.102"
+
+unbound:
+  enabled: false
+
+# DHCP advertises DNS (nico-dns VIP) + PXE (pxe VIP) to booting clients.
+nico-dhcp:
+  config:
+    kea:
+      hookParameters:
+        nameservers: "10.6.145.102"
+        ntpServer: "10.6.145.102"
+        provisioningServer: "10.6.145.101"

@@ -6,7 +6,7 @@ Waits for operator CRDs to be available before Crunchy PostgreSQL
 clusters and cert-manager Certificates can be created.
 */}}
 
-{{- if or .Values.certManager.enabled .Values.crunchyPostgres.enabled .Values.externalSecrets.enabled }}
+{{- if or .Values.certManager.enabled .Values.crunchyPostgres.enabled .Values.externalSecrets.enabled .Values.metallb.enabled .Values.nmstate.enabled }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -58,7 +58,7 @@ spec:
       serviceAccountName: {{ .Release.Name }}-wait-operators
       containers:
         - name: wait
-          image: registry.redhat.io/openshift4/ose-cli:latest
+          image: quay.io/openshift/origin-cli:latest
           command:
             - /bin/sh
             - -c
@@ -97,6 +97,31 @@ spec:
                 managementState: Managed
               EOCFG
               echo "ExternalSecretsConfig created — ESO controller will deploy"
+              {{- end }}
+              {{- if .Values.metallb.enabled }}
+              echo "Waiting for MetalLB CRDs..."
+              until oc get crd ipaddresspools.metallb.io > /dev/null 2>&1; do
+                sleep 5
+              done
+              echo "MetalLB CRDs available"
+              {{- end }}
+              {{- if .Values.nmstate.enabled }}
+              echo "Waiting for NMState CRD..."
+              until oc get crd nmstates.nmstate.io > /dev/null 2>&1; do
+                sleep 5
+              done
+              echo "Creating NMState operand..."
+              cat <<EONMS | oc apply -f -
+              apiVersion: nmstate.io/v1
+              kind: NMState
+              metadata:
+                name: nmstate
+              EONMS
+              echo "Waiting for NodeNetworkConfigurationPolicy CRD..."
+              until oc get crd nodenetworkconfigurationpolicies.nmstate.io > /dev/null 2>&1; do
+                sleep 5
+              done
+              echo "NMState ready — NNCP CRD available"
               {{- end }}
               echo "All operator CRDs ready"
 {{- end }}

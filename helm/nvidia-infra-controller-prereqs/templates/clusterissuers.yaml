@@ -80,7 +80,7 @@ spec:
       serviceAccountName: {{ .Release.Name }}-setup-issuers
       containers:
         - name: setup
-          image: registry.redhat.io/openshift4/ose-cli:latest
+          image: quay.io/openshift/origin-cli:latest
           command:
             - /bin/sh
             - -c

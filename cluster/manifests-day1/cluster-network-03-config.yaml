@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Day-1 install manifest (Assisted Installer "openshift" folder): put OVN-Kubernetes
+# in local-gateway mode. Required so MetalLB LoadBalancer VIPs advertised on a
+# dedicated secondary VLAN NIC actually carry traffic — in the default
+# shared-gateway mode, OVN only services LoadBalancer VIPs on the primary bridge
+# (br-ex) and silently drops VIP traffic arriving on a secondary interface.
+# Applied at install so the cluster boots in this mode with no live rollout blip.
+# Uploaded by cluster/bootstrap.sh only when NICO_LOCAL_GATEWAY=true.
+apiVersion: operator.openshift.io/v1
+kind: Network
+metadata:
+  name: cluster
+spec:
+  defaultNetwork:
+    ovnKubernetesConfig:
+      gatewayConfig:
+        # routingViaHost routes service traffic through the host so the VIP's
+        # DNAT rules exist on the node; ipForwarding: Global then lets the
+        # DNAT'd packet (now destined to the ClusterIP) forward into OVN.
+        # Both are required — routingViaHost alone leaves forwarding Restricted
+        # and the DNAT'd VIP traffic is dropped.
+        routingViaHost: true
+        ipForwarding: Global

@@ -99,3 +99,14 @@ patches:
     target:
       kind: Service
       name: nico-dns
+
+  # Same 53->5353 remap for the external (LoadBalancer VIP) DNS Services, so
+  # clients hitting the VIP on :53 reach nico-dns on :5353. Per-pod UDP + TCP.
+  - path: patches/fix-dns-external-service-port.yaml
+    target:
+      kind: Service
+      name: nico-dns-external-udp-0
+  - path: patches/fix-dns-external-service-port.yaml
+    target:
+      kind: Service
+      name: nico-dns-external-tcp-0
