@@ -7,21 +7,24 @@ SPDX-License-Identifier: Apache-2.0
 
 NICo's site/Core provisioning services must be reachable by the BlueField-3 DPU
 and the host it provisions, on a dedicated provisioning VLAN, via **MetalLB
-LoadBalancer services** on that VLAN. Following the field-proven pattern, each
-exposed service gets its **own** LB IP (not one shared VIP), and **unbound** is
-the client-facing DNS that resolves the `.forge` names agents dial:
+LoadBalancer services** on that VLAN. Each exposed service gets its **own** LB IP
+(not one shared VIP):
 
 | Service | LB IP (nico-lab) | Role |
 |---|---|---|
-| `nico-api` | `10.6.145.100` | Core gRPC API |
+| `nico-api` | `10.6.145.100` | Core gRPC API (agents dial by IP → cert carries an IP SAN) |
 | `nico-pxe` | `10.6.145.101` | PXE boot |
-| `unbound` | `10.6.145.102` | DNS — serves `.forge` records → the IPs above, forwards the rest |
+| `nico-dns` | `10.6.145.102` | DNS (non-privileged: `:5353` behind a 53→5353 Service remap) |
 
-`nico-dns` stays internal (`:5353`, no LB); `nico-dhcp` and the SSH console are
-not LB-exposed (DHCP is served via switch relay / the DPU). Agents dial
-`carbide-api.forge` / `nico-pxe.forge`; unbound resolves them, so the API cert
-validates via its `carbide-api.forge` SAN (no IP SAN needed). Operators reach
-the REST/Core API through the normal OpenShift Routes.
+`nico-dhcp` and the SSH console are not LB-exposed (DHCP is served via switch
+relay / the DPU). Operators reach the REST/Core API through the normal OpenShift
+Routes.
+
+> **unbound (the alosadagrande/hub0 `.forge` DNS pattern) is intentionally off here.**
+> It binds `:53` and uses `ip-transparent`, which this cluster's **restricted
+> runtime won't permit even as root** (needs `CAP_NET_ADMIN`). Enabling it needs a
+> custom SCC — a follow-up. `nico-dns` provides DNS non-privileged in the meantime,
+> and the API cert uses an IP SAN instead of a `.forge` name.
 
 ## The one non-obvious constraint
 
@@ -53,7 +56,7 @@ These are physical/site facts you provide; no manifest can create them:
 
 1. **A dedicated VLAN** and a **node NIC on it** (via a host bridge for VMs).
 2. **A small range of free IPs** on that VLAN (one per exposed service — api/pxe/
-   unbound) plus a **free node IP**.
+   nico-dns) plus a **free node IP**.
 3. **Local-gateway mode** (day-1 flag or day-2 patch, above).
 4. **DHCP relay** `ip helper-address <VIP>` on the DPU/BMC network SVI — DHCP is
    broadcast and cannot reach a unicast VIP without a relay. Note the **DPU
@@ -71,11 +74,11 @@ Copy the three per-site override files and set your values:
 |---|---|
 | `helm/values/prereqs-<lab>.yaml` | enable MetalLB + nmstate operators |
 | `helm/values/infra-site-<lab>.yaml` | MetalLB pool **range**, dataplane interface, node IP |
-| `helm/values/nico-core-<lab>.yaml` | per-service `externalService` LB IPs, `unbound` (enabled + `.forge` `localData` + forwarder), Kea hook params, siteConfig |
+| `helm/values/nico-core-<lab>.yaml` | per-service `externalService` LB IPs (api/pxe/nico-dns), Kea hook params, API cert IP SAN, siteConfig |
 
 Use the `*-nico-lab.yaml` files as the worked example (VLAN 712, pool
 `10.6.145.100-110`, NIC `enp3s0`, node IP `10.6.145.2`; api `.100` / pxe `.101`
-/ unbound `.102`).
+/ nico-dns `.102`).
 
 ## Deploy
 
@@ -94,8 +97,8 @@ lab profiles are unaffected.
 oc get svc -n nico-system | grep LoadBalancer   # each service has its own EXTERNAL-IP
 oc get nncp                                      # dataplane NIC configured
 # from a host on the VLAN:
-nc -vz 10.6.145.100 443    # API; pxe -> .101:8080; unbound/DNS -> .102:53
-dig @10.6.145.102 carbide-api.forge   # unbound resolves .forge -> .100
+nc -vz 10.6.145.100 443    # API; pxe -> .101:8080; nico-dns -> .102:53
+dig @10.6.145.102 nico.local          # nico-dns answers on the VIP
 ```
 
 `EXTERNAL-IP` stuck at `<pending>` → MetalLB pool/annotation mismatch (is the IP

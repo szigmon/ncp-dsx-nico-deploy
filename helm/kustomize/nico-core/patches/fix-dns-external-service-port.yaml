@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# nico-dns listens on :5353 (can't bind privileged :53 non-root, see nico-core.yaml),
+# but the external LoadBalancer Services present :53 with targetPort hardcoded to 53.
+# Repoint targetPort to 5353 so VIP:53 reaches the pod. Surgical (ports[0] only) so
+# it applies to both the per-pod UDP and TCP external Services, preserving protocol.
+- op: replace
+  path: /spec/ports/0/targetPort
+  value: 5353

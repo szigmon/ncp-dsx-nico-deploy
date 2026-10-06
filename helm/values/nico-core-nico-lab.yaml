@@ -82,20 +82,27 @@ nico-api:
       type = "integer"
       ranges = [{ start = "4200000000", end = "4200000254" }]
 
-  # Core gRPC API on its own dataplane LB IP. DPU/host agents dial it by the
-  # carbide-api.forge name (resolved by unbound below), so TLS validates via the
-  # cert's carbide-api.forge SAN — no IP SAN needed. Operators use the cloud Route.
+  # Core gRPC API on its own dataplane LB IP. Agents dial the VIP by IP, so the
+  # cert carries an IP SAN. Operators use the cloud-side Route.
   externalService:
     enabled: true
     annotations:
       metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
+  certificate:
+    ipAddresses:
+      - "10.6.145.100"
 
 # =============================================================================
-# Per-service dataplane LB IPs on VLAN 712 (pool 10.6.145.100-110), following
-# the alosadagrande/hub0 working pattern: a separate IP per service, with
-# unbound as the client-facing DNS serving static .forge records that map to
-# the service LB IPs. nico-dns stays internal (:5353, no LB); nico-dhcp and
-# ssh-console are not LB-exposed.
+# Per-service dataplane LB IPs on VLAN 712 (pool 10.6.145.100-110): one IP per
+# service — nico-api .100, nico-pxe .101, nico-dns .102. nico-dns is the
+# client-facing DNS on its own VIP, non-privileged (:5353 behind a 53->5353
+# Service remap, see the kustomize patch). nico-dhcp and ssh-console are not
+# LB-exposed (DHCP served via switch relay / the DPU per site topology).
+#
+# unbound (the alosadagrande/hub0 pattern) is DISABLED here: it binds :53 and
+# uses ip-transparent, which this cluster's restricted runtime won't permit even
+# as root (needs CAP_NET_ADMIN). Enabling it needs a custom SCC — a follow-up
+# (see dataplane-vip.md). nico-dns covers DNS non-privileged in the meantime.
 # =============================================================================
 nico-pxe:
   externalService:
@@ -103,39 +110,16 @@ nico-pxe:
     annotations:
       metallb.universe.tf/loadBalancerIPs: "10.6.145.101"
 
-# unbound = the DNS clients use. Forwards to the site resolver and serves the
-# .forge names NICo/DPU agents resolve, mapping them to the service LB IPs.
-unbound:
-  enabled: true
-  image:
-    repository: registry.redhat.io/hi/unbound
-    tag: "1.26.1"
-  exporter:
-    enabled: false
-  command: ["/usr/sbin/unbound"]
-  args: ["-d", "-c", "/etc/unbound/local.conf.d/unbound.cfg"]
+nico-dns:
   externalService:
     enabled: true
-    annotations:
-      metallb.universe.tf/loadBalancerIPs: "10.6.145.102"
-  localConfig:
-    forwarders.conf: |
-      forward-zone:
-          name: .
-          forward-addr: 10.11.5.160
-  localData:
-    - name: carbide-pxe.forge
-      addresses: ["10.6.145.101"]
-    - name: nico-pxe.forge
-      addresses: ["10.6.145.101"]
-    - name: carbide-static-pxe.forge
-      addresses: ["10.6.145.101"]
-    - name: carbide-api.forge
-      addresses: ["10.6.145.100"]
+    perPodAnnotations:
+      - metallb.universe.tf/loadBalancerIPs: "10.6.145.102"
 
-# DHCP advertises DNS (unbound) + PXE to booting clients via option 6 / the
-# provisioning hook. Not LB-exposed here (matches the working pattern) — served
-# via switch relay / the DPU per the site topology.
+unbound:
+  enabled: false
+
+# DHCP advertises DNS (nico-dns VIP) + PXE (pxe VIP) to booting clients.
 nico-dhcp:
   config:
     kea:
