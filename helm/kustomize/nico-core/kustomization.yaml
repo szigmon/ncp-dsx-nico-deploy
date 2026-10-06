@@ -99,19 +99,3 @@ patches:
     target:
       kind: Service
       name: nico-dns
-
-  # External (LoadBalancer/MetalLB VIP) Services hardcode targetPort to the
-  # privileged port; repoint to the real listeners (5353 / 2222). Present only
-  # when externalService is enabled (site overlay); no-op otherwise.
-  - path: patches/fix-dns-external-service-port.yaml
-    target:
-      kind: Service
-      name: nico-dns-external-udp-0
-  - path: patches/fix-dns-external-service-port.yaml
-    target:
-      kind: Service
-      name: nico-dns-external-tcp-0
-  - path: patches/fix-ssh-console-external-service-port.yaml
-    target:
-      kind: Service
-      name: nico-ssh-console-rs-external

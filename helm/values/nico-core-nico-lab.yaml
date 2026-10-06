@@ -82,62 +82,64 @@ nico-api:
       type = "integer"
       ranges = [{ start = "4200000000", end = "4200000254" }]
 
-  # Expose the Core gRPC API on the shared dataplane VIP. DPU/host agents dial
-  # it directly; operators still use the cloud-side Route. externalTrafficPolicy
-  # null -> omitted -> defaults to Cluster, required to share one VIP.
+  # Core gRPC API on its own dataplane LB IP. DPU/host agents dial it by the
+  # carbide-api.forge name (resolved by unbound below), so TLS validates via the
+  # cert's carbide-api.forge SAN — no IP SAN needed. Operators use the cloud Route.
   externalService:
     enabled: true
-    externalTrafficPolicy: null
     annotations:
       metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
-      metallb.universe.tf/allow-shared-ip: "nico-site-vip"
-  # IP SAN so DPU/host agents dialing the API by the VIP over TLS pass cert
-  # validation; without it direct-IP gRPC to 10.6.145.100 fails BadCertificate.
-  certificate:
-    ipAddresses:
-      - "10.6.145.100"
 
 # =============================================================================
-# Shared dataplane VIP (10.6.145.100, VLAN 712) for provisioning services.
-# DHCP is intentionally NOT enabled here — pending the DHCP-relay decision for
-# VLAN 712. All five share one VIP via allow-shared-ip (non-overlapping ports).
+# Per-service dataplane LB IPs on VLAN 712 (pool 10.6.145.100-110), following
+# the alosadagrande/hub0 working pattern: a separate IP per service, with
+# unbound as the client-facing DNS serving static .forge records that map to
+# the service LB IPs. nico-dns stays internal (:5353, no LB); nico-dhcp and
+# ssh-console are not LB-exposed.
 # =============================================================================
 nico-pxe:
   externalService:
     enabled: true
-    externalTrafficPolicy: null
     annotations:
-      metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
-      metallb.universe.tf/allow-shared-ip: "nico-site-vip"
+      metallb.universe.tf/loadBalancerIPs: "10.6.145.101"
 
-nico-dns:
+# unbound = the DNS clients use. Forwards to the site resolver and serves the
+# .forge names NICo/DPU agents resolve, mapping them to the service LB IPs.
+unbound:
+  enabled: true
+  image:
+    repository: registry.redhat.io/hi/unbound
+    tag: "1.26.1"
+  exporter:
+    enabled: false
+  command: ["/usr/sbin/unbound"]
+  args: ["-d", "-c", "/etc/unbound/local.conf.d/unbound.cfg"]
   externalService:
     enabled: true
-    perPodAnnotations:
-      - metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
-        metallb.universe.tf/allow-shared-ip: "nico-site-vip"
-
-nico-ssh-console-rs:
-  externalService:
-    enabled: true
     annotations:
-      metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
-      metallb.universe.tf/allow-shared-ip: "nico-site-vip"
+      metallb.universe.tf/loadBalancerIPs: "10.6.145.102"
+  localConfig:
+    forwarders.conf: |
+      forward-zone:
+          name: .
+          forward-addr: 10.11.5.160
+  localData:
+    - name: carbide-pxe.forge
+      addresses: ["10.6.145.101"]
+    - name: nico-pxe.forge
+      addresses: ["10.6.145.101"]
+    - name: carbide-static-pxe.forge
+      addresses: ["10.6.145.101"]
+    - name: carbide-api.forge
+      addresses: ["10.6.145.100"]
 
-# nico-dhcp runs behind the shared VIP like the other services (per upstream
-# docs: switches relay DHCP to the nico-dhcp LoadBalancer VIP — it is NOT
-# hostNetwork). Needs a DHCP relay -> 10.6.145.100 on the DPU/BMC network SVI to
-# actually receive broadcasts; the DPU serves the host in-band overlay itself.
-# hookParameters advertise DNS/PXE/NTP to booting clients -> the dataplane VIP.
+# DHCP advertises DNS (unbound) + PXE to booting clients via option 6 / the
+# provisioning hook. Not LB-exposed here (matches the working pattern) — served
+# via switch relay / the DPU per the site topology.
 nico-dhcp:
-  externalService:
-    enabled: true
-    annotations:
-      metallb.universe.tf/loadBalancerIPs: "10.6.145.100"
-      metallb.universe.tf/allow-shared-ip: "nico-site-vip"
   config:
     kea:
       hookParameters:
-        nameservers: "10.6.145.100"
-        ntpServer: "10.6.145.100"
-        provisioningServer: "10.6.145.100"
+        nameservers: "10.6.145.102"
+        ntpServer: "10.6.145.102"
+        provisioningServer: "10.6.145.101"

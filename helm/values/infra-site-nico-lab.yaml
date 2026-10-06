@@ -6,8 +6,10 @@
 # Usage: make deploy-site-infra SITE_INFRA_VALUES=helm/values/infra-site-nico-lab.yaml
 metallb:
   enabled: true
+  # Range (not a single /32): per-service LB IPs — nico-api .100, nico-pxe .101,
+  # unbound .102 (pinned via loadBalancerIPs in helm/values/nico-core-nico-lab.yaml).
   addresses:
-    - 10.6.145.100/32
+    - 10.6.145.100-10.6.145.110
   interfaces:
     - enp3s0
 
