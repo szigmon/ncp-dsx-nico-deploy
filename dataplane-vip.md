@@ -45,21 +45,34 @@ gatewayConfig:
   oc rollout status daemonset/ovnkube-node -n openshift-ovn-kubernetes
   ```
 
-## Per-site external inputs (NOT code)
+## Prerequisites — must be in place BEFORE `make deploy-dataplane-vip`
 
-Physical/site facts you provide; no manifest can create them:
+The make targets only configure software (the NIC's IP via NNCP, MetalLB, the
+VIPs). They do **not** create the VLAN or attach a NIC — so the data-plane
+network must already exist, in this order:
 
-1. **A dedicated VLAN** and a **node NIC on it** (via a host bridge for VMs).
-2. **A small range of free IPs** on that VLAN (one per exposed service) plus a
-   **free node IP**.
-3. **Local-gateway mode** (day-1 flag or day-2 patch, above).
+1. **The dedicated VLAN** on the switch/fabric, and **a node NIC on it**. This is
+   the hard prerequisite — MetalLB/NNCP configure that NIC, they can't create it:
+   - **New cluster:** the NIC is attached at VM-create time by `bootstrap.sh`
+     (`NICO_EXTRA_BRIDGES=<br>` → the VM gets a NIC on the host bridge carrying the
+     VLAN). So the host bridge + physical VLAN must exist **before bootstrap**.
+   - **Existing cluster:** the node must **already** have a NIC on the data-plane
+     VLAN. If it doesn't, attach one (VM NIC on the VLAN bridge) **before** running
+     the target — otherwise the NNCP has no interface to configure.
+2. **Local-gateway mode** (day-1 flag at bootstrap, or the day-2 patch above) —
+   also before deploy, since the VIPs won't carry traffic without it.
+3. **A small range of free IPs** on that VLAN (one per exposed service) + a free
+   node IP — put these in the override files.
 4. **DHCP relay** `ip helper-address <VIP>` on the DPU-BMC/OOB SVI — DHCP is
    broadcast and can't reach a unicast VIP without a relay. The **DPU serves the
    host in-band overlay DHCP itself**, so that part needs no relay; the relay is
-   for the DPU-BMC/OOB and host-BMC networks `nico-dhcp` handles.
+   for the DPU-BMC/OOB and host-BMC networks `nico-dhcp` handles. (Needed for DHCP
+   to serve, not for the deploy to succeed.)
 5. **Real `siteConfig` networks/pools** in your `nico-core-<site>.yaml` (the
    shipped values are RFC-1918 placeholders — the API starts, but real machines
    won't onboard until these match the site).
+
+Items 1–2 are **blocking** for the deploy; 4–5 are needed for actual provisioning.
 
 ## Configure a new site
 
