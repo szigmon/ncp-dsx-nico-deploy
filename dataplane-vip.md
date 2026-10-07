@@ -75,14 +75,25 @@ See `helm/values/*-example.yaml` for the templates.
 
 ## Deploy
 
+Name the override files `*-<SITE>.yaml` and set `SITE` — one command does all three
+stages (each an idempotent helm upgrade, so it's safe on an existing install):
+
+```bash
+make deploy-dataplane-vip SITE=<site>
+```
+
+`SITE` can also live in a git-ignored `deploy.env` (`cp deploy.env.example deploy.env`),
+then just `make deploy-dataplane-vip`. Or run the stages individually / point the
+knobs at explicit files:
+
 ```bash
 make deploy-prereqs     PREREQS_VALUES=helm/values/prereqs-<site>.yaml
 make deploy-site-infra  SITE_INFRA_VALUES=helm/values/infra-site-<site>.yaml
 make deploy-site        SITE_VALUES=helm/values/nico-core-<site>.yaml
 ```
 
-Without the override files, MetalLB/nmstate stay off (neutral chart defaults) —
-other profiles are unaffected.
+With no `SITE` / no override files, MetalLB/nmstate stay off (neutral chart
+defaults) — other profiles are unaffected.
 
 ## Verify
 

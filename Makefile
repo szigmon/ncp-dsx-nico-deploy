@@ -38,12 +38,17 @@ MAT ?=
 # exits without resource pools, so a real deploy MUST supply them. Default is
 # the production overlay (pools/networks, no bypass); MAT=1 swaps to the
 # machine-a-tron overlay, which carries its own pools + emulator bypass flags.
-# Override with SITE_VALUES=<file> for a site-specific config.
-SITE_VALUES ?= helm/values/nico-core-site.yaml
-# Optional per-site values overrides for the prereqs and infra-site charts
-# (MetalLB operators / operand). Empty = charts' neutral defaults (MetalLB off).
-PREREQS_VALUES ?=
-SITE_INFRA_VALUES ?=
+# Override with SITE_VALUES=<file>, or set SITE=<name> to auto-resolve all three
+# per-site override files: helm/values/{nico-core,prereqs,infra-site}-<SITE>.yaml.
+# SITE (and anything else) can live in a git-ignored deploy.env so the make
+# targets need no args. Command-line SITE=... still wins over deploy.env.
+-include deploy.env
+SITE ?=
+SITE_VALUES ?= $(if $(SITE),helm/values/nico-core-$(SITE).yaml,helm/values/nico-core-site.yaml)
+# Per-site overrides for the prereqs and infra-site charts (MetalLB operators /
+# operand). Empty (no SITE) = charts' neutral defaults, i.e. MetalLB stays off.
+PREREQS_VALUES ?= $(if $(SITE),helm/values/prereqs-$(SITE).yaml)
+SITE_INFRA_VALUES ?= $(if $(SITE),helm/values/infra-site-$(SITE).yaml)
 SITE_CONFIG_FLAG := $(if $(MAT),-f $(MAT_VALUES),-f $(SITE_VALUES))
 
 # Vault topology auto-selection. HA (3-node Raft) needs >=3 schedulable nodes;
@@ -632,6 +637,17 @@ endif
 # separately collides on the namespace and the `flow` ServiceAccount.
 
 deploy-all-site: deploy-site-infra vault-init deploy-site
+
+# Enable the MetalLB data-plane VIPs for a site on an EXISTING install. Needs
+# SITE=<name> (or deploy.env) and helm/values/{prereqs,infra-site,nico-core}-<SITE>.yaml.
+# Each step is an idempotent helm upgrade, so it only adds the MetalLB bits.
+# NOTE: if the VIP is on a secondary VLAN NIC, apply the OVN local-gateway patch
+# first (see dataplane-vip.md) — new clusters get it day-1 via NICO_LOCAL_GATEWAY.
+deploy-dataplane-vip:
+	@[ -n "$(SITE)" ] || { echo "SITE is required, e.g. make deploy-dataplane-vip SITE=myhub"; exit 1; }
+	$(MAKE) deploy-prereqs    SITE=$(SITE)
+	$(MAKE) deploy-site-infra SITE=$(SITE)
+	$(MAKE) deploy-site       SITE=$(SITE)
 
 # =============================================================================
 # CRC (single-node) — overrides for local development on CodeReady Containers
