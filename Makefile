@@ -649,6 +649,26 @@ deploy-dataplane-vip:
 	$(MAKE) deploy-site-infra SITE=$(SITE)
 	$(MAKE) deploy-site       SITE=$(SITE)
 
+# In-cluster health check for the data-plane VIPs. Flags the common failures
+# (EXTERNAL-IP <pending>, NNCP not configured, speaker down). The external
+# reachability probe can't be automated generically (needs a host on the VLAN),
+# so it's printed as the final manual step.
+verify-dataplane-vip:
+	@echo "=== LoadBalancer services (want an EXTERNAL-IP, not <pending>) ==="
+	@oc get svc -n nico-system 2>/dev/null | grep -E "NAME|LoadBalancer" || echo "  (none — is externalService enabled in your overlay?)"
+	@echo "=== NodeNetworkConfigurationPolicy (want STATUS=Available/SuccessfullyConfigured) ==="
+	@oc get nncp 2>/dev/null || echo "  (none — is nodeNetwork enabled?)"
+	@echo "=== MetalLB pool + advertisement ==="
+	@oc get ipaddresspool,l2advertisement -n metallb-system 2>/dev/null || echo "  (none)"
+	@echo "=== MetalLB pods (want controller + speaker Running) ==="
+	@oc get pods -n metallb-system 2>/dev/null | grep -E "NAME|controller|speaker" || echo "  (operator not installed?)"
+	@echo "=== OVN gateway mode (want routingViaHost:true + ipForwarding:Global for a secondary-NIC VIP) ==="
+	@oc get network.operator cluster -o jsonpath='{.spec.defaultNetwork.ovnKubernetesConfig.gatewayConfig}{"\n"}' 2>/dev/null || true
+	@echo ""
+	@echo "Final check (manual) — from a host ON the data-plane VLAN:"
+	@echo "  nc -vz <VIP> <port>     # api 443, pxe 8080, dns 53"
+	@echo "  VIP answers ARP but ports time out => OVN gateway settings missing."
+
 # =============================================================================
 # CRC (single-node) — overrides for local development on CodeReady Containers
 # =============================================================================

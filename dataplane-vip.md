@@ -110,14 +110,23 @@ defaults) — other profiles are unaffected.
 
 ## Verify
 
+One command runs the in-cluster checks (VIPs assigned, NNCP configured, MetalLB
+pods up, pool/advertisement present, OVN gateway mode):
+
 ```bash
-oc get svc -n nico-system | grep LoadBalancer   # each service has its own EXTERNAL-IP
-oc get nncp                                      # dataplane NIC configured
-# from a host on the VLAN:
-nc -vz 10.0.0.100 443          # API; pxe -> .101:8080; unbound/DNS -> .102:53
-dig @10.0.0.102 carbide-api.forge    # unbound resolves .forge -> the API VIP
+make verify-dataplane-vip
 ```
 
-`EXTERNAL-IP` stuck at `<pending>` → MetalLB pool/annotation mismatch (is the IP
-in the pool range?). IP answers ARP but ports time out → the OVN gateway settings
-above are missing.
+Then the external reachability test — from a host **on the data-plane VLAN**
+(no generic make target for this; it needs a host on the VLAN):
+
+```bash
+nc -vz <API_VIP> 443          # Core gRPC
+nc -vz <PXE_VIP> 8080         # PXE
+dig @<DNS_VIP> <some.name>    # DNS
+```
+
+Reading the result:
+- **`<pending>`** EXTERNAL-IP → MetalLB pool/annotation mismatch (is the IP in the pool range?).
+- VIP **answers ARP but ports time out** → the OVN gateway settings are missing (`routingViaHost` + `ipForwarding: Global`).
+- VIP **reachable on the ports** → working.
