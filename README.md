@@ -218,6 +218,50 @@ make status
 make undeploy
 ```
 
+## Data-plane VIPs (MetalLB)
+
+Optional add-on: expose NICo's site services (Core gRPC API, PXE, DNS) on a
+**dedicated provisioning VLAN** via per-service **MetalLB LoadBalancer VIPs**, so a
+BlueField-3 DPU and the host it provisions can reach them. Opt-in and
+non-breaking — with no site overrides MetalLB stays off and existing profiles are
+unaffected. Full reference (architecture, the OVN requirement, troubleshooting) is
+in [dataplane-vip.md](dataplane-vip.md).
+
+**Prerequisites** (must exist *before* the deploy — the targets configure the NIC
+and MetalLB, they don't create the network):
+
+- A dedicated VLAN and a **node NIC on it** — new clusters attach it at bootstrap
+  (`NICO_EXTRA_BRIDGES`), existing clusters must have one already (attach first).
+- **OVN local-gateway**, required for a VIP on a secondary NIC — day-1 via
+  `make bootstrap-cluster NICO_LOCAL_GATEWAY=true`, or a one-time day-2 `oc patch`
+  on an existing cluster (see [dataplane-vip.md](dataplane-vip.md)).
+- A free IP range on the VLAN (one VIP per service) plus a free node IP.
+
+Configure — copy the examples and set your values:
+
+```bash
+cp helm/values/prereqs-example.yaml     helm/values/prereqs-<site>.yaml
+cp helm/values/infra-site-example.yaml  helm/values/infra-site-<site>.yaml   # pool range, NIC, node IP
+cp helm/values/nico-core-example.yaml   helm/values/nico-core-<site>.yaml    # per-service VIPs, hook params
+```
+
+Deploy (one command; idempotent, safe on an existing install):
+
+```bash
+make deploy-dataplane-vip SITE=<site>
+```
+
+`SITE` can also live in a git-ignored `deploy.env` (`cp deploy.env.example deploy.env`),
+then run with no args. With no `SITE`/overrides, nothing MetalLB-related deploys.
+
+Verify:
+
+```bash
+make verify-dataplane-vip          # VIPs, NNCP, MetalLB pods, pool, OVN mode
+```
+
+Then, from a host on the VLAN: `nc -vz <VIP> <port>` (api 443, pxe 8080, dns 53).
+
 ## Utility Scripts
 
 ### cleanup.sh — Full teardown
