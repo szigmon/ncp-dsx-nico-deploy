@@ -40,6 +40,10 @@ MAT ?=
 # machine-a-tron overlay, which carries its own pools + emulator bypass flags.
 # Override with SITE_VALUES=<file> for a site-specific config.
 SITE_VALUES ?= helm/values/nico-core-site.yaml
+# Optional per-site values overrides for the prereqs and infra-site charts
+# (MetalLB operators / operand). Empty = charts' neutral defaults (MetalLB off).
+PREREQS_VALUES ?=
+SITE_INFRA_VALUES ?=
 SITE_CONFIG_FLAG := $(if $(MAT),-f $(MAT_VALUES),-f $(SITE_VALUES))
 
 # Vault topology auto-selection. HA (3-node Raft) needs >=3 schedulable nodes;
@@ -154,7 +158,8 @@ bootstrap-cluster:
 		NICO_NETMASK='$(NICO_NETMASK)' \
 		NICO_OPENSHIFT_VERSION='$(NICO_OPENSHIFT_VERSION)' \
 		NICO_PULL_SECRET='$(NICO_PULL_SECRET)' \
-		NICO_VM_PREFIX='$(NICO_VM_PREFIX)'
+		NICO_VM_PREFIX='$(NICO_VM_PREFIX)' \
+		NICO_LOCAL_GATEWAY='$(NICO_LOCAL_GATEWAY)'
 
 bootstrap-clean:
 	@bash cluster/bootstrap.sh clean \
@@ -328,6 +333,7 @@ helm-template: helm-dep-build
 deploy-prereqs:
 	helm upgrade --install -n default nvidia-infra-controller-prereqs \
 		helm/nvidia-infra-controller-prereqs/ \
+		$(if $(PREREQS_VALUES),-f $(PREREQS_VALUES)) \
 		--wait --timeout 15m
 
 deploy-cloud-infra: helm-dep-build
@@ -416,6 +422,7 @@ deploy-site-infra: helm-dep-build
 	helm upgrade --install -n nico-system nico-site-infra \
 		helm/infra-site/ \
 		--create-namespace --timeout 15m \
+		$(if $(SITE_INFRA_VALUES),-f $(SITE_INFRA_VALUES)) \
 		$(VAULT_OVERRIDES)
 
 vault-init:

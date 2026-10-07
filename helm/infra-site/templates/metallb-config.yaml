@@ -1,0 +1,39 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+MetalLB operand: controller/speaker (MetalLB CR), the dataplane VIP pool, and
+an L2 advertisement pinned to the dataplane interface. The operator and CRDs
+are installed by the prereqs chart; the wait-operators job gates on the CRDs
+so these apply cleanly.
+*/}}
+
+{{- if .Values.metallb.enabled }}
+apiVersion: metallb.io/v1beta1
+kind: MetalLB
+metadata:
+  name: metallb
+  namespace: {{ .Values.metallb.namespace }}
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: {{ .Values.metallb.poolName }}
+  namespace: {{ .Values.metallb.namespace }}
+spec:
+  addresses:
+    {{- toYaml .Values.metallb.addresses | nindent 4 }}
+  autoAssign: false
+  avoidBuggyIPs: true
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: {{ .Values.metallb.poolName }}
+  namespace: {{ .Values.metallb.namespace }}
+spec:
+  ipAddressPools:
+    - {{ .Values.metallb.poolName }}
+  interfaces:
+    {{- toYaml .Values.metallb.interfaces | nindent 4 }}
+{{- end }}

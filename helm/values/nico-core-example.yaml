@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Example per-site Core overlay: expose the provisioning services on per-service
+# MetalLB VIPs from the pool in infra-site-<site>.yaml. Copy to
+# nico-core-<site>.yaml, set real IPs, and layer after nico-core.yaml:
+#   make deploy-site SITE_VALUES=helm/values/nico-core-<site>.yaml
+#
+# Each service gets its own LB IP: nico-api .100, nico-pxe .101, unbound .102.
+# unbound is the client-facing DNS (non-privileged via the fix-unbound-port
+# 53->5353 kustomize patch) serving .forge names mapped to the service IPs.
+
+nico-api:
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "10.0.0.100"
+  # Agents dial the VIP by IP, so carry an IP SAN. (Alternatively use a DNS name
+  # served by unbound below + the chart's extraDnsNames, and drop this.)
+  certificate:
+    ipAddresses:
+      - "10.0.0.100"
+
+nico-pxe:
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "10.0.0.101"
+
+unbound:
+  enabled: true
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "10.0.0.102"
+  localConfig:
+    forwarders.conf: |
+      forward-zone:
+          name: .
+          forward-addr: <upstream-dns>      # site recursive resolver
+  localData:
+    - name: nico-pxe.forge
+      addresses: ["10.0.0.101"]
+    - name: carbide-api.forge
+      addresses: ["10.0.0.100"]
+
+# DHCP advertises DNS (unbound VIP) + PXE (pxe VIP) to booting clients.
+nico-dhcp:
+  config:
+    kea:
+      hookParameters:
+        nameservers: "10.0.0.102"
+        ntpServer: "10.0.0.102"
+        provisioningServer: "10.0.0.101"

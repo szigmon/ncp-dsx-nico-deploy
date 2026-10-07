@@ -37,6 +37,7 @@ NICO_BRIDGE="${NICO_BRIDGE:-}"                     # default: auto-detect first 
 NICO_PRIMARY_IFACE="${NICO_PRIMARY_IFACE:-enp1s0}" # host NIC the bridge uses
 NICO_NETMASK="${NICO_NETMASK:-24}"
 NICO_OLM_WORKAROUND="${NICO_OLM_WORKAROUND:-true}" # LVMS via previous-minor catalog
+NICO_LOCAL_GATEWAY="${NICO_LOCAL_GATEWAY:-false}"  # day-1 OVN local-gateway mode (MetalLB on a dedicated VLAN NIC)
 # Required (no default): NICO_BASE_DOMAIN, NICO_API_IP, NICO_GW, NICO_DNS
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -154,6 +155,14 @@ create_cluster() {
         -P user_managed_networking=True \
         --paramfile "${STATIC_NET_FILE}" \
         "${NICO_CLUSTER_NAME}"
+
+    # Day-1 OVN local-gateway mode so MetalLB LoadBalancer VIPs work on a
+    # dedicated secondary VLAN NIC (see manifests-day1/cluster-network-03-config.yaml).
+    # Opt-in: only labs that expose services on a dedicated VLAN need it.
+    if [ "${NICO_LOCAL_GATEWAY}" = "true" ]; then
+        log "Uploading day-1 local-gateway manifest (routingViaHost: true)..."
+        aicli create manifest --dir "${SCRIPT_DIR}/manifests-day1" --openshift "${NICO_CLUSTER_NAME}"
+    fi
 }
 
 wait_status() {

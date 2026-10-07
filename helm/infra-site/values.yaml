@@ -242,3 +242,22 @@ nico-rest-common:
     create: true
     temporalEncryptionKey:
       value: ""
+
+# MetalLB operand (CR + IPAddressPool + L2Advertisement) for the dataplane VIPs.
+# Neutral by default — supply addresses/interfaces per-site via SITE_INFRA_VALUES
+# (see helm/values/infra-site-example.yaml).
+metallb:
+  enabled: false
+  namespace: metallb-system
+  poolName: nico-dataplane-vip
+  addresses: []
+  interfaces: []
+
+# Static IP on the dataplane NIC (NodeNetworkConfigurationPolicy via
+# kubernetes-nmstate) so MetalLB can ARP the VIP on that VLAN. Neutral by
+# default — set interface/address per-site via SITE_INFRA_VALUES.
+nodeNetwork:
+  enabled: false
+  interface: ""
+  address: ""
+  prefixLength: 24
