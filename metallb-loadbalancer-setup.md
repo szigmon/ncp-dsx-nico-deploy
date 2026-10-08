@@ -10,20 +10,24 @@ gRPC API must be reachable from the physical network that managed machines
 boot on. OpenShift Routes cannot carry UDP/67, DNS, or TFTP, so a real
 bare-metal site needs LoadBalancer VIPs — which on OpenShift means MetalLB.
 
-This guide covers taking a VIP allocated by network IT and wiring it through
-to the Core services.
+This guide covers the **design rationale** — taking a VIP allocated by network
+IT and wiring it through to the Core services, and the decisions behind it.
+
+> **Now implemented.** The flow described here ships as opt-in make targets and
+> example overrides — see [dataplane-vip.md](dataplane-vip.md) for the deploy
+> and verify steps (`make deploy-dataplane-vip` / `make verify-dataplane-vip`).
+> This document remains the reference for *why* each piece is shaped the way it
+> is; read it for background and troubleshooting rather than as the install path.
 
 ## Current State of This Repo
 
-**Nothing MetalLB-related is deployed today.** There is no operator
-subscription, no address pool, and no `externalService` override anywhere in
-`helm/values/`, `helm/infra-cloud/`, `helm/infra-site/`,
-`helm/nvidia-infra-controller-prereqs/`, or `helm/kustomize/`. Every upstream
-chart ships `externalService.enabled: false`, so `make deploy-site` produces
-zero LoadBalancer services.
-
-Everything described below is additive. The only existing MetalLB material is
-in the read-only upstream submodule, as reference:
+MetalLB is **opt-in and off by default.** With no site overrides the prereqs
+chart installs no MetalLB operator and `make deploy-site` produces zero
+LoadBalancer services (every upstream chart still ships
+`externalService.enabled: false`). A site enables it by copying the
+`*-example.yaml` overrides and setting `SITE` (see
+[dataplane-vip.md](dataplane-vip.md)). The reference material in the read-only
+upstream submodule:
 
 | Path (under `helm/vendor/infra-controller/`) | Contents |
 |---|---|
@@ -400,7 +404,8 @@ VIP assigned but unreachable from the dataplane VLAN:
 ## Integrating Into the Repo
 
 The manual steps above are fine for a first bring-up, but do not survive
-`make undeploy`. The durable form follows this repo's existing layering:
+`make undeploy`. The durable form (now **implemented** — see
+[dataplane-vip.md](dataplane-vip.md)) follows this repo's existing layering:
 
 | Concern | Where it goes |
 |---|---|

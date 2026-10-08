@@ -6,9 +6,10 @@
 # nico-core-<site>.yaml, set real IPs, and layer after nico-core.yaml:
 #   make deploy-site SITE_VALUES=helm/values/nico-core-<site>.yaml
 #
-# Each service gets its own LB IP: nico-api .100, nico-pxe .101, unbound .102.
-# unbound is the client-facing DNS (non-privileged via the fix-unbound-port
-# 53->5353 kustomize patch) serving .forge names mapped to the service IPs.
+# Each service gets its own LB IP: nico-api .100, nico-pxe .101, unbound .102,
+# nico-dhcp .103. unbound is the client-facing DNS (non-privileged via the
+# fix-unbound-port 53->5353 kustomize patch) serving .forge names mapped to the
+# service IPs. nico-dhcp is a LoadBalancer too, so switches can relay DHCP to it.
 
 nico-api:
   externalService:
@@ -44,8 +45,15 @@ unbound:
     - name: carbide-api.forge
       addresses: ["10.0.0.100"]
 
-# DHCP advertises DNS (unbound VIP) + PXE (pxe VIP) to booting clients.
+# nico-dhcp on its own VIP so site switches can relay DHCP to it
+# (`ip helper-address 10.0.0.103` on the DPU-BMC/OOB + host-BMC SVIs). The DPU
+# serves the host in-band overlay DHCP itself, so that network needs no relay.
+# hookParameters advertise DNS (unbound VIP) + PXE (pxe VIP) to booting clients.
 nico-dhcp:
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "10.0.0.103"
   config:
     kea:
       hookParameters:

@@ -281,7 +281,13 @@ Verify:
 make verify-dataplane-vip          # VIPs, NNCP, MetalLB pods, pool, OVN mode
 ```
 
-Then, from a host on the VLAN: `nc -vz <VIP> <port>` (api 443, pxe 8080, dns 53).
+Then, from a host on the VLAN, probe the ports and resolve a name:
+
+```bash
+nc -vz <API_VIP> 443          # Core gRPC
+nc -vz <PXE_VIP> 8080         # PXE
+dig @<DNS_VIP> <some.name>    # DNS (unbound VIP)
+```
 
 ## Utility Scripts
 

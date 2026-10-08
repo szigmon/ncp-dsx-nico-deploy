@@ -678,6 +678,12 @@ verify-dataplane-vip:
 	@echo "Final check (manual) — from a host ON the data-plane VLAN:"
 	@echo "  nc -vz <VIP> <port>     # api 443, pxe 8080, dns 53"
 	@echo "  VIP answers ARP but ports time out => OVN gateway settings missing."
+	@echo ""
+	@lb=$$(oc get svc -n nico-system -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.name}{"\t"}{.status.loadBalancer.ingress[0].ip}{"\n"}{end}' 2>/dev/null); \
+	if [ -z "$$lb" ]; then echo "FAIL: no LoadBalancer services in nico-system (externalService not enabled?)"; exit 1; fi; \
+	pending=$$(echo "$$lb" | awk -F'\t' '$$2==""{print $$1}'); \
+	if [ -n "$$pending" ]; then echo "FAIL: LoadBalancer services with no EXTERNAL-IP (<pending>):"; echo "$$pending" | sed 's/^/  /'; exit 1; fi; \
+	echo "OK: all LoadBalancer services have an EXTERNAL-IP assigned."
 
 # =============================================================================
 # CRC (single-node) — overrides for local development on CodeReady Containers

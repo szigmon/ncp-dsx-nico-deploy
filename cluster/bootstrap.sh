@@ -155,14 +155,17 @@ create_cluster() {
         -P user_managed_networking=True \
         --paramfile "${STATIC_NET_FILE}" \
         "${NICO_CLUSTER_NAME}"
+}
 
-    # Day-1 OVN local-gateway mode so MetalLB LoadBalancer VIPs work on a
-    # dedicated secondary VLAN NIC (see manifests-day1/cluster-network-03-config.yaml).
-    # Opt-in: only labs that expose services on a dedicated VLAN need it.
-    if [ "${NICO_LOCAL_GATEWAY}" = "true" ]; then
-        log "Uploading day-1 local-gateway manifest (routingViaHost: true)..."
-        aicli create manifest --dir "${SCRIPT_DIR}/manifests-day1" --openshift "${NICO_CLUSTER_NAME}"
-    fi
+# Day-1 OVN local-gateway mode so MetalLB LoadBalancer VIPs work on a dedicated
+# secondary VLAN NIC (see manifests-day1/cluster-network-03-config.yaml). Opt-in.
+# Called before install on every path (incl. reruns that skip create_cluster), so
+# a resumed, not-yet-installed cluster still gets the manifest. aicli overwrites,
+# so re-uploading is harmless.
+upload_day1_manifest() {
+    [ "${NICO_LOCAL_GATEWAY}" = "true" ] || return 0
+    log "Uploading day-1 local-gateway manifest (routingViaHost: true)..."
+    aicli create manifest --dir "${SCRIPT_DIR}/manifests-day1" --openshift "${NICO_CLUSTER_NAME}"
 }
 
 wait_status() {
@@ -260,6 +263,7 @@ install() {
         aicli download iso "$NICO_CLUSTER_NAME" -p "$NICO_DISK_PATH"
         create_vm
         wait_status "ready" 90
+        upload_day1_manifest
         log "Starting installation..."
         aicli start cluster "$NICO_CLUSTER_NAME"
         wait_status "installed" 120

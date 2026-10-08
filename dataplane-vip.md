@@ -5,6 +5,12 @@ SPDX-License-Identifier: Apache-2.0
 
 # Data-plane VIPs for NICo site services
 
+> This is the **deploy/operate** guide for the implemented MetalLB flow (make
+> targets, overrides, verification). For the **design rationale** — L2 vs BGP,
+> the DHCP-relay silent failure, API IP-SAN handling, shared vs per-service VIPs,
+> and per-field troubleshooting — see
+> [metallb-loadbalancer-setup.md](metallb-loadbalancer-setup.md).
+
 NICo's site/Core provisioning services must be reachable by the BlueField-3 DPU
 and the host it provisions, on a dedicated provisioning VLAN, via **MetalLB
 LoadBalancer services** on that VLAN. Each exposed service gets its **own** LB IP
@@ -15,11 +21,12 @@ LoadBalancer services** on that VLAN. Each exposed service gets its **own** LB I
 | `nico-api` | `10.0.0.100` | Core gRPC API (agents dial by IP → cert carries an IP SAN) |
 | `nico-pxe` | `10.0.0.101` | PXE boot |
 | `unbound` | `10.0.0.102` | client-facing DNS — serves `.forge` records → the IPs above, forwards the rest |
+| `nico-dhcp` | `10.0.0.103` | DHCP for the DPU-BMC/OOB + host-BMC networks (reached via switch relay) |
 
-`nico-dhcp` and the SSH console are not LB-exposed (DHCP is served via switch
-relay / the DPU). Operators reach the REST/Core API through the normal OpenShift
-Routes. `unbound` runs non-privileged — the existing `fix-unbound-port` kustomize
-patch remaps it to `:5353`, and the external Service presents `:53`.
+The SSH console is not LB-exposed. Operators reach the REST/Core API through the
+normal OpenShift Routes. `unbound` runs non-privileged — the existing
+`fix-unbound-port` kustomize patch remaps it to `:5353`, and the external Service
+presents `:53`.
 
 ## The one non-obvious constraint
 
@@ -63,11 +70,12 @@ network must already exist, in this order:
    also before deploy, since the VIPs won't carry traffic without it.
 3. **A small range of free IPs** on that VLAN (one per exposed service) + a free
    node IP — put these in the override files.
-4. **DHCP relay** `ip helper-address <VIP>` on the DPU-BMC/OOB SVI — DHCP is
-   broadcast and can't reach a unicast VIP without a relay. The **DPU serves the
-   host in-band overlay DHCP itself**, so that part needs no relay; the relay is
-   for the DPU-BMC/OOB and host-BMC networks `nico-dhcp` handles. (Needed for DHCP
-   to serve, not for the deploy to succeed.)
+4. **DHCP relay** `ip helper-address <nico-dhcp VIP>` (e.g. `10.0.0.103`) on the
+   DPU-BMC/OOB and host-BMC SVIs — DHCP is broadcast and can't reach a unicast VIP
+   without a relay, so point the relay at the `nico-dhcp` VIP specifically (not the
+   api/pxe/dns VIPs). The **DPU serves the host in-band overlay DHCP itself**, so
+   that network needs no relay. (Needed for DHCP to serve, not for the deploy to
+   succeed.)
 5. **Real `siteConfig` networks/pools** in your `nico-core-<site>.yaml` (the
    shipped values are RFC-1918 placeholders — the API starts, but real machines
    won't onboard until these match the site).
@@ -82,7 +90,7 @@ Copy the three example override files and set your values:
 |---|---|
 | `helm/values/prereqs-<site>.yaml` | enable MetalLB + nmstate operators |
 | `helm/values/infra-site-<site>.yaml` | MetalLB pool **range**, dataplane interface, node IP |
-| `helm/values/nico-core-<site>.yaml` | per-service `externalService` LB IPs (api/pxe/unbound), `unbound` `.forge` `localData`, Kea hook params, API cert IP SAN, siteConfig |
+| `helm/values/nico-core-<site>.yaml` | per-service `externalService` LB IPs (api/pxe/unbound/dhcp), `unbound` `.forge` `localData`, Kea hook params, API cert IP SAN, siteConfig |
 
 See `helm/values/*-example.yaml` for the templates.
 
