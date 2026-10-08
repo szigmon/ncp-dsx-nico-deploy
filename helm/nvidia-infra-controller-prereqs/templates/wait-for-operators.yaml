@@ -121,28 +121,13 @@ spec:
               echo "ExternalSecretsConfig created — ESO controller will deploy"
               {{- end }}
               {{- if .Values.metallb.enabled }}
-              echo "Waiting for MetalLB CRDs..."
-              until oc get crd ipaddresspools.metallb.io > /dev/null 2>&1; do
-                sleep 5
-              done
-              echo "MetalLB CRDs available"
+              wait_crd ipaddresspools.metallb.io
               {{- end }}
               {{- if .Values.nmstate.enabled }}
-              echo "Waiting for NMState CRD..."
-              until oc get crd nmstates.nmstate.io > /dev/null 2>&1; do
-                sleep 5
-              done
+              wait_crd nmstates.nmstate.io
               echo "Creating NMState operand..."
-              cat <<EONMS | oc apply -f -
-              apiVersion: nmstate.io/v1
-              kind: NMState
-              metadata:
-                name: nmstate
-              EONMS
-              echo "Waiting for NodeNetworkConfigurationPolicy CRD..."
-              until oc get crd nodenetworkconfigurationpolicies.nmstate.io > /dev/null 2>&1; do
-                sleep 5
-              done
+              sa /apis/nmstate.io/v1/nmstates/nmstate '{"apiVersion":"nmstate.io/v1","kind":"NMState","metadata":{"name":"nmstate"}}'
+              wait_crd nodenetworkconfigurationpolicies.nmstate.io
               echo "NMState ready — NNCP CRD available"
               {{- end }}
               echo "All operator CRDs ready"

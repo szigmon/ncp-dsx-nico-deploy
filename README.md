@@ -5,6 +5,17 @@ Installs upstream Helm charts directly with values overrides and a thin
 Red Hat infrastructure layer — Crunchy PostgreSQL, RHBK Keycloak, Vault HA,
 External Secrets Operator, and OpenShift Routes.
 
+## Documentation Map
+
+| Document | Purpose |
+|---|---|
+| **README.md** (this file) | Deployment procedures, prerequisites, make targets, architecture overview |
+| **[dataplane-vip.md](dataplane-vip.md)** | Complete guide for MetalLB data-plane VIPs: prerequisites, configuration, verification, troubleshooting |
+| **[metallb-loadbalancer-setup.md](metallb-loadbalancer-setup.md)** | Design rationale: why MetalLB, L2 vs BGP, OVN local-gateway requirement, DHCP relay |
+| **[minimal-setup-requirements.md](minimal-setup-requirements.md)** | Storage provisioning for bare clusters (LVM Storage, ODF) |
+
+**Quick start:** Go to [Data-plane VIPs (MetalLB)](#data-plane-vips-metallb) below.
+
 ## Prerequisites
 
 - OpenShift 4.21+
@@ -241,53 +252,131 @@ make undeploy
 
 ## Data-plane VIPs (MetalLB)
 
-Optional add-on: expose NICo's site services (Core gRPC API, PXE, DNS) on a
-**dedicated provisioning VLAN** via per-service **MetalLB LoadBalancer VIPs**, so a
-BlueField-3 DPU and the host it provisions can reach them. Opt-in and
-non-breaking — with no site overrides MetalLB stays off and existing profiles are
-unaffected. Full reference (architecture, the OVN requirement, troubleshooting) is
-in [dataplane-vip.md](dataplane-vip.md).
+Optional add-on: expose NICo's site services (Core gRPC API, PXE, DNS, DHCP) on a
+**dedicated provisioning VLAN** via a **shared MetalLB VIP** (all services on one IP,
+different ports), so a BlueField-3 DPU and the host it provisions can reach them.
+Opt-in and non-breaking — with no `DATAPLANE_VIP` set, MetalLB stays off and existing
+profiles are unaffected. Full reference (architecture, the OVN requirement,
+troubleshooting) is in [dataplane-vip.md](dataplane-vip.md).
 
-**Prerequisites** (must exist *before* the deploy — the targets configure the NIC
-and MetalLB, they don't create the network):
+**Prerequisites** (must exist *before* the deploy):
 
 - A dedicated VLAN and a **node NIC on it** — new clusters attach it at bootstrap
   (`NICO_EXTRA_BRIDGES`), existing clusters must have one already (attach first).
 - **OVN local-gateway**, required for a VIP on a secondary NIC — day-1 via
   `make bootstrap-cluster NICO_LOCAL_GATEWAY=true`, or a one-time day-2 `oc patch`
   on an existing cluster (see [dataplane-vip.md](dataplane-vip.md)).
-- A free IP range on the VLAN (one VIP per service) plus a free node IP.
+- A free IP on the VLAN (the shared VIP) and a free node IP.
 
-Configure — copy the examples and set your values:
+### Quick Start: Add a New Site
 
-```bash
-cp helm/values/prereqs-example.yaml     helm/values/prereqs-<site>.yaml
-cp helm/values/infra-site-example.yaml  helm/values/infra-site-<site>.yaml   # pool range, NIC, node IP
-cp helm/values/nico-core-example.yaml   helm/values/nico-core-<site>.yaml    # per-service VIPs, hook params
-```
-
-Deploy (one command; idempotent, safe on an existing install):
+**Step 1 — Create `deploy.env` with your site's network config:**
 
 ```bash
-make deploy-dataplane-vip SITE=<site>
+cp deploy.env.example deploy.env
+# edit deploy.env and set:
+SITE=mysite
+DATAPLANE_VIP=10.6.145.100
+DATAPLANE_POOL=10.6.145.100-10.6.145.110
+DATAPLANE_NIC=ens1f0
+DATAPLANE_NODE_IP=10.6.145.2
 ```
 
-`SITE` can also live in a git-ignored `deploy.env` (`cp deploy.env.example deploy.env`),
-then run with no args. With no `SITE`/overrides, nothing MetalLB-related deploys.
+**Step 2 — Auto-create and configure site-specific Core override:**
 
-Verify:
+```bash
+make new-site SITE=mysite
+```
+
+This copies the example overlay and shows you what to edit:
+  - `unbound.localConfig.forwarders.conf` → your site's upstream DNS
+  - `siteConfig` → your site's networks and resource pools
+
+Edit `helm/values/nico-core-mysite.yaml` with your values.
+
+**Step 3 — Deploy all three stages (operators, infrastructure, Core):**
+
+```bash
+make deploy-dataplane-vip
+```
+
+All config comes from `deploy.env` and `helm/values/nico-core-<SITE>.yaml` — no other args needed.
+
+**Idempotent:** Safe to run multiple times. All helm upgrades are idempotent (re-running only applies changes, doesn't break existing deployments). Verification checks work on already-deployed resources.
+
+### Verify
 
 ```bash
 make verify-dataplane-vip          # VIPs, NNCP, MetalLB pods, pool, OVN mode
 ```
 
-Then, from a host on the VLAN, probe the ports and resolve a name:
+**Step 4 — Verify in-cluster health:**
 
 ```bash
-nc -vz <API_VIP> 443          # Core gRPC
-nc -vz <PXE_VIP> 8080         # PXE
-dig @<DNS_VIP> <some.name>    # DNS (unbound VIP)
+make verify-dataplane-vip
 ```
+
+**Step 5 — Verify external reachability from a host on the data-plane VLAN:**
+
+```bash
+VIP=$(grep DATAPLANE_VIP deploy.env | cut -d= -f2)
+nc -vz $VIP 443          # Core gRPC API
+nc -vz $VIP 8080         # PXE
+nc -vz $VIP 67           # DHCP
+dig @$VIP example.com    # DNS (unbound)
+```
+
+### Managing Multiple Sites
+
+If you have multiple labs/sites, define them all in one `deploy.env` file with numbered vars:
+
+```bash
+# Edit deploy.env: add numbered sections for each site
+SITE=site1   # Active site to deploy
+
+# Site 1 config
+DATAPLANE_VIP_SITE1=10.0.0.100
+DATAPLANE_POOL_SITE1=10.0.0.100-10.0.0.110
+DATAPLANE_NIC_SITE1=ens1f0
+DATAPLANE_NODE_IP_SITE1=10.0.0.2
+
+# Site 2 config (add more by copying the section and renaming)
+DATAPLANE_VIP_SITE2=10.6.145.100
+DATAPLANE_POOL_SITE2=10.6.145.100-10.6.145.110
+DATAPLANE_NIC_SITE2=ens1f0
+DATAPLANE_NODE_IP_SITE2=10.6.145.2
+```
+
+Then create overrides for each:
+
+```bash
+make new-site SITE=site1
+make new-site SITE=site2
+
+vim helm/values/nico-core-site1.yaml  # DNS + pools for site1
+vim helm/values/nico-core-site2.yaml  # DNS + pools for site2
+```
+
+Deploy to all sites at once:
+
+```bash
+SITES="site1 site2" make deploy-all-sites
+```
+
+Or define the list in `deploy.env`:
+
+```bash
+SITES=site1 site2
+make deploy-all-sites
+```
+
+Or deploy to a single site:
+
+```bash
+SITE=site1 make deploy-dataplane-vip
+```
+
+`.gitignore` automatically ignores `deploy.env`, so you can commit per-site overrides (`helm/values/nico-core-*.yaml`) without leaking real IPs.
 
 ## Utility Scripts
 

@@ -1,39 +1,43 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 Red Hat, Inc. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Example per-site Core overlay: expose the provisioning services on per-service
-# MetalLB VIPs from the pool in infra-site-<site>.yaml. Copy to
-# nico-core-<site>.yaml, set real IPs, and layer after nico-core.yaml:
-#   make deploy-site SITE_VALUES=helm/values/nico-core-<site>.yaml
+# Example per-site Core overlay: add site-specific config and enable MetalLB.
+# Copy to nico-core-<site>.yaml, layer after nico-core.yaml.
 #
-# Each service gets its own LB IP: nico-api .100, nico-pxe .101, unbound .102,
-# nico-dhcp .103. unbound is the client-facing DNS (non-privileged via the
-# fix-unbound-port 53->5353 kustomize patch) serving .forge names mapped to the
-# service IPs. nico-dhcp is a LoadBalancer too, so switches can relay DHCP to it.
+# IMPORTANT: All IP values (VIP, DNS, PXE) come from deploy.env env vars only.
+# This file has empty IP fields — do NOT hand-edit them. Instead:
+#   cp deploy.env.example deploy.env  &&  edit IPs in deploy.env  &&
+#   make deploy-dataplane-vip SITE=<site>
+#
+# The make targets override the empty values via helm --set using DATAPLANE_VIP.
+# All services share one IP on different ports (API 443, PXE 8080, DNS 53, DHCP 67).
+#
+# Edit the siteConfig and forwarders sections in this file per site; the IPs are
+# handled entirely by the make targets and deploy.env.
 
 nico-api:
   externalService:
     enabled: true
     annotations:
-      metallb.universe.tf/loadBalancerIPs: "10.0.0.100"
+      metallb.universe.tf/loadBalancerIPs: ""   # Set via DATAPLANE_VIP env var
   # Agents dial the VIP by IP, so carry an IP SAN. (Alternatively use a DNS name
   # served by unbound below + the chart's extraDnsNames, and drop this.)
   certificate:
     ipAddresses:
-      - "10.0.0.100"
+      - ""                                       # Set via DATAPLANE_VIP env var
 
 nico-pxe:
   externalService:
     enabled: true
     annotations:
-      metallb.universe.tf/loadBalancerIPs: "10.0.0.101"
+      metallb.universe.tf/loadBalancerIPs: ""   # Set via DATAPLANE_VIP env var (shared with other services)
 
 unbound:
   enabled: true
   externalService:
     enabled: true
     annotations:
-      metallb.universe.tf/loadBalancerIPs: "10.0.0.102"
+      metallb.universe.tf/loadBalancerIPs: ""   # Set via DATAPLANE_VIP env var (shared with other services)
   localConfig:
     forwarders.conf: |
       forward-zone:
@@ -41,22 +45,22 @@ unbound:
           forward-addr: <upstream-dns>      # site recursive resolver
   localData:
     - name: nico-pxe.forge
-      addresses: ["10.0.0.101"]
+      addresses: [""]            # Set via DATAPLANE_VIP env var (localData[0])
     - name: carbide-api.forge
-      addresses: ["10.0.0.100"]
+      addresses: [""]            # Set via DATAPLANE_VIP env var (localData[1])
 
-# nico-dhcp on its own VIP so site switches can relay DHCP to it
-# (`ip helper-address 10.0.0.103` on the DPU-BMC/OOB + host-BMC SVIs). The DPU
-# serves the host in-band overlay DHCP itself, so that network needs no relay.
-# hookParameters advertise DNS (unbound VIP) + PXE (pxe VIP) to booting clients.
+# nico-dhcp on the shared VIP (different port: 67 vs API 443, PXE 8080, DNS 53).
+# All services share DATAPLANE_VIP via MetalLB allow-shared-ip annotation.
 nico-dhcp:
   externalService:
     enabled: true
     annotations:
-      metallb.universe.tf/loadBalancerIPs: "10.0.0.103"
+      metallb.universe.tf/loadBalancerIPs: ""   # Set via DATAPLANE_VIP env var (shared with other services)
   config:
     kea:
       hookParameters:
-        nameservers: "10.0.0.102"
-        ntpServer: "10.0.0.102"
-        provisioningServer: "10.0.0.101"
+        nameservers: ""          # Set via DATAPLANE_VIP env var (unbound's port 53)
+        provisioningServer: ""   # Set via DATAPLANE_VIP env var (nico-pxe's port 8080)
+        # ntpServer: omitted — nico-ntp is disabled here, so there is no NTP
+        # service to advertise. Set it to a REACHABLE site NTP address if clients
+        # need time sync (do not point it at the VIP).

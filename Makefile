@@ -4,9 +4,11 @@
 .PHONY: check-prereqs bootstrap-cluster bootstrap-clean patch-vendor
 .PHONY: docker-build-ubi docker-push-ubi docker-build-core docker-push-core docker-build-nicocli docker-push-nicocli helm-dep-build helm-lint helm-template
 .PHONY: build-machine-a-tron bootstrap-machine-a-tron machine-a-tron-status
+.PHONY: deploy-all-sites new-site
 .PHONY: deploy-prereqs deploy-cloud-infra deploy-cloud
 .PHONY: deploy-site-infra vault-init vault-admin-cert ensure-ssh-host-key deploy-site deploy-site-agent
 .PHONY: deploy-all-cloud patch-keycloak-route bootstrap-org deploy-all-site status undeploy
+.PHONY: deploy-dataplane-vip verify-prereqs-deployed verify-infra-deployed verify-core-deployed verify-dataplane-vip
 .PHONY: reset-dpu-endpoint
 
 # Upstream source repo (git submodule, read-only)
@@ -50,6 +52,26 @@ SITE_VALUES ?= $(if $(SITE),helm/values/nico-core-$(SITE).yaml,helm/values/nico-
 PREREQS_VALUES ?= $(if $(SITE),helm/values/prereqs-$(SITE).yaml)
 SITE_INFRA_VALUES ?= $(if $(SITE),helm/values/infra-site-$(SITE).yaml)
 SITE_CONFIG_FLAG := $(if $(MAT),-f $(MAT_VALUES),-f $(SITE_VALUES))
+
+# Data-plane MetalLB shared VIP: all services (API, PXE, DNS, DHCP) on one IP,
+# different ports. When set, automatically enables MetalLB in prereqs and infra-site.
+# Resolve from numbered vars in deploy.env based on SITE (e.g., DATAPLANE_VIP_SITE1).
+toupper = $(shell echo $(1) | tr a-z A-Z)
+DATAPLANE_VIP     ?= $(DATAPLANE_VIP_$(call toupper,$(SITE)))
+DATAPLANE_POOL    ?= $(DATAPLANE_POOL_$(call toupper,$(SITE)))
+DATAPLANE_NIC     ?= $(DATAPLANE_NIC_$(call toupper,$(SITE)))
+DATAPLANE_NODE_IP ?= $(DATAPLANE_NODE_IP_$(call toupper,$(SITE)))
+# Annotation key (dots escaped for --set). All services use the same shared IP.
+MLB_ANN := externalService.annotations.metallb\.universe\.tf/loadBalancerIPs
+DATAPLANE_VIP_SET := \
+  $(if $(DATAPLANE_VIP),--set-string 'nico-api.$(MLB_ANN)=$(DATAPLANE_VIP)' --set-string 'nico-api.certificate.ipAddresses[0]=$(DATAPLANE_VIP)' --set-string 'nico-pxe.$(MLB_ANN)=$(DATAPLANE_VIP)' --set-string 'unbound.$(MLB_ANN)=$(DATAPLANE_VIP)' --set-string 'nico-dhcp.$(MLB_ANN)=$(DATAPLANE_VIP)' --set 'nico-api.externalService.annotations.metallb\.universe\.tf/allow-shared-ip=true' --set 'nico-pxe.externalService.annotations.metallb\.universe\.tf/allow-shared-ip=true' --set 'unbound.externalService.annotations.metallb\.universe\.tf/allow-shared-ip=true' --set 'nico-dhcp.externalService.annotations.metallb\.universe\.tf/allow-shared-ip=true' --set-string 'unbound.localData[0].addresses[0]=$(DATAPLANE_VIP)' --set-string 'unbound.localData[1].addresses[0]=$(DATAPLANE_VIP)' --set-string 'nico-dhcp.config.kea.hookParameters.nameservers=$(DATAPLANE_VIP)' --set-string 'nico-dhcp.config.kea.hookParameters.provisioningServer=$(DATAPLANE_VIP)')
+DATAPLANE_INFRA_SET := \
+  $(if $(DATAPLANE_VIP),--set 'metallb.enabled=true') \
+  $(if $(DATAPLANE_POOL),--set-string 'metallb.addresses[0]=$(DATAPLANE_POOL)') \
+  $(if $(DATAPLANE_NIC),--set-string 'metallb.interfaces[0]=$(DATAPLANE_NIC)' --set-string 'nodeNetwork.enabled=true' --set-string 'nodeNetwork.interface=$(DATAPLANE_NIC)') \
+  $(if $(DATAPLANE_NODE_IP),--set-string 'nodeNetwork.address=$(DATAPLANE_NODE_IP)')
+DATAPLANE_PREREQS_SET := \
+  $(if $(DATAPLANE_VIP),--set 'metallb.enabled=true' --set 'nmstate.enabled=true')
 
 # Vault topology auto-selection. HA (3-node Raft) needs >=3 schedulable nodes;
 # a single-node (SNO/VM) or 2-node cluster falls back to standalone Vault (file
@@ -349,6 +371,7 @@ deploy-prereqs:
 	helm upgrade --install -n default nvidia-infra-controller-prereqs \
 		helm/nvidia-infra-controller-prereqs/ \
 		$(if $(PREREQS_VALUES),-f $(PREREQS_VALUES)) \
+		$(DATAPLANE_PREREQS_SET) \
 		--wait --timeout 15m
 
 deploy-cloud-infra: helm-dep-build
@@ -438,6 +461,7 @@ deploy-site-infra: helm-dep-build
 		helm/infra-site/ \
 		--create-namespace --timeout 15m \
 		$(if $(SITE_INFRA_VALUES),-f $(SITE_INFRA_VALUES)) \
+		$(DATAPLANE_INFRA_SET) \
 		$(VAULT_OVERRIDES)
 
 vault-init:
@@ -573,6 +597,7 @@ deploy-site: ensure-ssh-host-key patch-vendor
 		-f helm/values/nico-core.yaml $(SITE_CONFIG_FLAG) \
 		--set 'nico-api.certificate.extraDnsNames[0]=carbide-api.forge' \
 		--set 'nico-api.certificate.extraDnsNames[1]=nico-api-grpc-nico-system.$(CLUSTER_DOMAIN)' \
+		$(DATAPLANE_VIP_SET) \
 		--post-renderer $(POST_RENDERER) --post-renderer-args $(SITE_KUSTOMIZE)
 	@# Create a passthrough route for nico-admin-cli gRPC access (HTTP/2
 	@# requires passthrough — edge/reencrypt downgrades to HTTP/1.1).
@@ -648,16 +673,94 @@ endif
 
 deploy-all-site: deploy-site-infra vault-init deploy-site
 
+# Deploy to all configured sites in one command. Define SITES in deploy.env:
+#   SITES=site1 site2 site3
+deploy-all-sites:
+	@[ -n "$(SITES)" ] || { echo "ERROR: SITES is required, e.g. SITES='site1 site2' make deploy-all-sites"; exit 1; }
+	@for site in $(SITES); do \
+		echo "" && \
+		echo "╔═══════════════════════════════════════════════════╗" && \
+		echo "║  Deploying $$site  ║" && \
+		echo "╚═══════════════════════════════════════════════════╝" && \
+		$(MAKE) deploy-dataplane-vip SITE=$$site || { echo "✗ $$site failed"; exit 1; }; \
+	done
+	@echo ""
+	@echo "╔═══════════════════════════════════════════════════╗"
+	@echo "║  ✓ All sites deployed successfully  ║"
+	@echo "╚═══════════════════════════════════════════════════╝"
+
+# Create a new per-site Core override file with boilerplate. Only creates the
+# file; user must edit unbound forwarders (upstream DNS) and siteConfig (networks).
+new-site:
+	@[ -n "$(SITE)" ] || { echo "ERROR: SITE required, e.g. make new-site SITE=mysite"; exit 1; }
+	@[ ! -f helm/values/nico-core-$(SITE).yaml ] || { echo "ERROR: helm/values/nico-core-$(SITE).yaml already exists"; exit 1; }
+	@cp helm/values/nico-core-example.yaml helm/values/nico-core-$(SITE).yaml
+	@echo "✓ Created helm/values/nico-core-$(SITE).yaml"
+	@echo ""
+	@echo "Next, edit helm/values/nico-core-$(SITE).yaml and set:"
+	@echo "  1. unbound.localConfig.forwarders.conf"
+	@echo "     → your site's upstream recursive DNS resolver (e.g., 8.8.8.8, 1.1.1.1, or your internal resolver)"
+	@echo "  2. siteConfig"
+	@echo "     → replace RFC-1918 network examples with your site's actual pools"
+	@echo ""
+	@echo "Then run: make deploy-dataplane-vip"
+
 # Enable the MetalLB data-plane VIPs for a site on an EXISTING install. Needs
-# SITE=<name> (or deploy.env) and helm/values/{prereqs,infra-site,nico-core}-<SITE>.yaml.
+# SITE=<name> (or deploy.env) and helm/values/nico-core-<SITE>.yaml.
 # Each step is an idempotent helm upgrade, so it only adds the MetalLB bits.
 # NOTE: if the VIP is on a secondary VLAN NIC, apply the OVN local-gateway patch
 # first (see dataplane-vip.md) — new clusters get it day-1 via NICO_LOCAL_GATEWAY.
 deploy-dataplane-vip:
-	@[ -n "$(SITE)" ] || { echo "SITE is required, e.g. make deploy-dataplane-vip SITE=myhub"; exit 1; }
+	@[ -n "$(SITE)" ] || { echo "ERROR: SITE is required (set in deploy.env or CLI, e.g. make deploy-dataplane-vip SITE=myhub)"; exit 1; }
+	@[ -n "$(DATAPLANE_VIP)" ] || { echo "ERROR: DATAPLANE_VIP is required (set in deploy.env)"; exit 1; }
+	@[ -n "$(DATAPLANE_POOL)" ] || { echo "ERROR: DATAPLANE_POOL is required (set in deploy.env)"; exit 1; }
+	@[ -n "$(DATAPLANE_NIC)" ] || { echo "ERROR: DATAPLANE_NIC is required (set in deploy.env)"; exit 1; }
+	@[ -n "$(DATAPLANE_NODE_IP)" ] || { echo "ERROR: DATAPLANE_NODE_IP is required (set in deploy.env)"; exit 1; }
+	@echo "=== Step 1/3: Deploy prerequisites (MetalLB + NMState operators) ==="
 	$(MAKE) deploy-prereqs    SITE=$(SITE)
+	@echo "Verifying operators are deploying..."
+	@oc rollout status deployment/metallb-operator -n metallb-system --timeout=5m 2>/dev/null || \
+		oc wait --for=condition=Progressing deployment/metallb-operator -n metallb-system --timeout=5m 2>/dev/null || \
+		echo "⚠ MetalLB operator still deploying (OK, it takes a moment)"
+	@echo "✓ Prerequisites deployed"
+	@echo ""
+	@echo "=== Step 2/3: Deploy site infrastructure (Vault, NATS, PG, MetalLB config) ==="
 	$(MAKE) deploy-site-infra SITE=$(SITE)
+	@echo "Verifying MetalLB config..."
+	@oc get metallb -n metallb-system >/dev/null 2>&1 || { echo "✗ MetalLB CR not found"; exit 1; }
+	@oc get ipaddresspool -n metallb-system >/dev/null 2>&1 || { echo "✗ IPAddressPool not found"; exit 1; }
+	@echo "✓ Site infrastructure deployed"
+	@echo ""
+	@echo "=== Step 3/3: Deploy NICo Core with data-plane services ==="
 	$(MAKE) deploy-site       SITE=$(SITE)
+	@echo "Verifying Core services..."
+	@oc get svc -n nico-system nico-api nic-pxe >/dev/null 2>&1 || { echo "✗ Core services not found"; exit 1; }
+	@echo "✓ NICo Core deployed"
+	@echo ""
+	@echo "=== All stages deployed successfully ==="
+	@echo "Next: make verify-dataplane-vip"
+
+# Verify each deployment stage independently (for debugging or re-running checks).
+verify-prereqs-deployed:
+	@echo "=== Checking prerequisites ==="
+	@oc get ns metallb-system >/dev/null || { echo "✗ metallb-system namespace not found"; exit 1; }
+	@oc get ns nmstate >/dev/null || { echo "✗ nmstate namespace not found"; exit 1; }
+	@oc get crd ipaddresspools.metallb.io >/dev/null || { echo "✗ MetalLB CRD not found"; exit 1; }
+	@oc get crd nmstates.nmstate.io >/dev/null || { echo "✗ NMState CRD not found"; exit 1; }
+	@echo "✓ All prerequisites present"
+
+verify-infra-deployed:
+	@echo "=== Checking site infrastructure ==="
+	@oc get metallb -n metallb-system >/dev/null || { echo "✗ MetalLB CR not found"; exit 1; }
+	@oc get ipaddresspool -n metallb-system >/dev/null || { echo "✗ IPAddressPool not found"; exit 1; }
+	@oc get crd nodenetworkconfigurationpolicies.nmstate.io >/dev/null || { echo "✗ NNCP CRD not found"; exit 1; }
+	@echo "✓ Infrastructure deployed"
+
+verify-core-deployed:
+	@echo "=== Checking NICo Core ==="
+	@oc get svc -n nico-system nico-api >/dev/null || { echo "✗ nico-api service not found"; exit 1; }
+	@oc get pod -n nico-system -l app=nico-api >/dev/null || { echo "✗ nico-api pods not found"; exit 1; }
+	@echo "✓ NICo Core deployed"
 
 # In-cluster health check for the data-plane VIPs. Flags the common failures
 # (EXTERNAL-IP <pending>, NNCP not configured, speaker down). The external
