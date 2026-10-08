@@ -76,8 +76,12 @@ nico-api:
       secretName: vault-unseal-secret
     vaultClusterInfo:
       configMapName: vault-cluster-info
+    # Wrapper secret: re-emits nico-site-pg-pguser-nico with both 'user' and
+    # 'username' keys. The upstream migration Job hardcodes key: username but
+    # Crunchy PGO emits key: user; kustomize cannot patch Helm hook resources.
+    # See helm/infra-site/templates/migration-creds-eso.yaml.
     databaseCredentials:
-      secretName: nico-site-pg-pguser-nico
+      secretName: nico-site-pg-migration-creds
     databaseConfig:
       configMapName: nico-system-nico-database-config
     nicoWebHostname:

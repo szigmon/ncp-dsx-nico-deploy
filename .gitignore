@@ -15,6 +15,9 @@ helm/infra-site/charts/
 *kubeconfig*
 .idea
 *.tgz
+tmp
+launchpad/docs/
+node_modules/
 
 # Local per-site deploy config (SITE=..., etc.) — never commit real site values
 deploy.env

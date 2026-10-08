@@ -121,6 +121,16 @@ check-prereqs:
 			echo "  [MISSING] no default StorageClass — PG, Vault, NATS, and Temporal PVCs will fail"; \
 			MISSING=1; \
 		fi; \
+		IR_STATE=$$(oc get configs.imageregistry.operator.openshift.io cluster \
+			-o jsonpath='{.spec.managementState}' 2>/dev/null); \
+		if [ "$$IR_STATE" = "Managed" ] || [ "$$IR_STATE" = "Unmanaged" ]; then \
+			echo "  [OK]      image registry: $$IR_STATE"; \
+		else \
+			echo "  [INFO]    image registry is '$$IR_STATE' — not required for deploy, but some"; \
+			echo "            OpenShift features depend on it. Enable with:"; \
+			echo "            oc patch configs.imageregistry.operator.openshift.io cluster \\"; \
+			echo "              --type merge -p '{\"spec\":{\"managementState\":\"Managed\",\"storage\":{\"emptyDir\":{}}}}'"; \
+		fi; \
 	else \
 		echo "  [MISSING] oc is not logged in to a cluster"; \
 		echo "            (skipping default StorageClass check)"; \
@@ -714,6 +724,36 @@ status:
 	oc get pods -n nico-system --no-headers 2>/dev/null | \
 		awk '{count[$$3]++} END {for (s in count) printf "%s: %d  ", s, count[s]; print ""}' || \
 	echo "(not deployed)"
+	@echo "" && \
+	echo "=== REST API ===" && \
+	( \
+	  _AU=$$(oc get secret keycloak-admin-secret -n rhbk-operator \
+	      -o jsonpath='{.data.username}' | base64 -d 2>/dev/null) && \
+	  _AP=$$(oc get secret keycloak-admin-secret -n rhbk-operator \
+	      -o jsonpath='{.data.password}' | base64 -d 2>/dev/null) && \
+	  _AT=$$(curl -sk --connect-timeout 3 --max-time 10 \
+	      -X POST "$(KC_URL)/realms/master/protocol/openid-connect/token" \
+	      --data-urlencode "grant_type=password" --data-urlencode "client_id=admin-cli" \
+	      --data-urlencode "username=$$_AU" --data-urlencode "password=$$_AP" \
+	      | jq -r .access_token) && \
+	  _CU=$$(curl -sk --connect-timeout 3 --max-time 10 \
+	      -H "Authorization: Bearer $$_AT" \
+	      "$(KC_URL)/admin/realms/nico/clients?clientId=ncx-service" | jq -r '.[0].id') && \
+	  _CS=$$(curl -sk --connect-timeout 3 --max-time 10 \
+	      -H "Authorization: Bearer $$_AT" \
+	      "$(KC_URL)/admin/realms/nico/clients/$$_CU" | jq -r .secret) && \
+	  _TK=$$(curl -sk --connect-timeout 3 --max-time 10 \
+	      -X POST "$(KC_URL)/realms/nico/protocol/openid-connect/token" \
+	      --data-urlencode "grant_type=client_credentials" \
+	      --data-urlencode "client_id=ncx-service" \
+	      --data-urlencode "client_secret=$$_CS" | jq -r .access_token) && \
+	  [ -n "$$_TK" ] && [ "$$_TK" != null ] && \
+	  _SITES=$$(curl -sk --connect-timeout 3 --max-time 10 \
+	      -H "Authorization: Bearer $$_TK" \
+	      "$(API_URL)/v2/org/ncx/nico/site" \
+	      | jq -r '[.[].name] | join(", ")' 2>/dev/null) && \
+	  echo "  OK — registered sites: $${_SITES:-none}" \
+	) 2>/dev/null || echo "  not reachable from this host (see README step 7)"
 
 ## reset-dpu-endpoint BMC_IP=<ip> — Re-trigger preingestion for a static-IP DPU whose
 ## preingestion_state is stuck at "complete" but has no machine record (e.g. after a

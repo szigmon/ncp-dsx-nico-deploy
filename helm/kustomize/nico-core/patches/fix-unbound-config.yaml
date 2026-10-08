@@ -6,6 +6,16 @@
 # etc.) so extra keys added via localConfig values are silently dropped.
 # This strategic-merge patch adds the main config that the Red Hat UBI image
 # needs (no /bin/sh to generate it at runtime).
+#
+# Also overrides forwarders.conf and nico_local_unknowndomain.conf:
+# - forwarders.conf: upstream ships a deliberately broken placeholder
+#   ("include: patchme/patchme.conf") that crashes unbound on startup.
+#   Replaced with a comment-only file; unbound resolves recursively from root.
+#   Per-site forwarders go in helm/values/nico-core.yaml under
+#   unbound.localConfig.forwarders\.conf.
+# - nico_local_unknowndomain.conf: upstream omits the server: header, which
+#   is required when this file is included at top-level (after a forward-zone
+#   section closes the server context). Added server: wrapper.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -21,3 +31,17 @@ data:
       pidfile: "/tmp/unbound.pid"
       username: ""
     include: "/etc/unbound/local.conf.d/*.conf"
+  forwarders.conf: |
+    # No forwarders configured — unbound resolves recursively from root hints.
+    # Override per-site in helm/values/nico-core.yaml:
+    #   unbound:
+    #     localConfig:
+    #       forwarders.conf: |
+    #         forward-zone:
+    #             name: "."
+    #             forward-addr: <UPSTREAM_DNS_IP>
+  nico_local_unknowndomain.conf: |
+    server:
+        local-zone: "unknowndomain." static
+        local-data: "unknowndomain. 10800 IN NS localhost."
+        local-data: "unknowndomain. 10800 IN SOA localhost. nobody.invalid. 1 3600 1200 604800 10800"

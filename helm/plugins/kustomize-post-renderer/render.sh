@@ -9,10 +9,12 @@ set -euo pipefail
 
 KUSTOMIZE_DIR="${1:?Usage: --post-renderer-args <path-to-kustomize-dir>}"
 
-TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
+# Use $HOME as the base for the temp dir: snap-confined kustomize cannot
+# access /tmp (it gets mapped to /var/lib/snapd/void), but can access $HOME.
+WORK_DIR=$(mktemp -d "$HOME/kustomize-post-renderer-XXXXXX")
+trap "rm -rf $WORK_DIR" EXIT
 
-cat > "$TMPDIR/all.yaml.raw"
+cat > "$WORK_DIR/all.yaml.raw"
 
 # Some upstream charts emit duplicate YAML mapping keys (e.g. nico-flow's
 # labels + selectorLabels both output app.kubernetes.io/name). kubectl
@@ -25,8 +27,36 @@ cat > "$TMPDIR/all.yaml.raw"
 # values work without a hand-written keaConfigJsonRaw blob.
 python3 -c "
 import json, yaml
-content = open('$TMPDIR/all.yaml.raw').read()
-docs = [doc for doc in yaml.safe_load_all(content) if doc is not None]
+
+# Kubernetes integer fields that Helm templates sometimes emit as quoted strings.
+# PyYAML round-trips them as str; coerce back to int so the API server accepts them.
+K8S_INT_KEYS = {
+    'terminationGracePeriodSeconds', 'replicas', 'port', 'containerPort',
+    'hostPort', 'successThreshold', 'failureThreshold', 'periodSeconds',
+    'timeoutSeconds', 'initialDelaySeconds', 'startupSeconds',
+    'revisionHistoryLimit', 'minReadySeconds', 'activeDeadlineSeconds',
+    'backoffLimit', 'completions', 'parallelism', 'ttlSecondsAfterFinished',
+}
+
+def coerce_ints(obj, parent_key=None):
+    if isinstance(obj, dict):
+        return {k: coerce_ints(v, k) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [coerce_ints(v, parent_key) for v in obj]
+    if isinstance(obj, str) and parent_key in K8S_INT_KEYS:
+        try:
+            return int(obj)
+        except ValueError:
+            pass
+    return obj
+
+content = open('$WORK_DIR/all.yaml.raw').read()
+# ConfigMap .data is map[string]string — skip coercion to avoid turning
+# string values like '8080' into bare ints the API server rejects.
+docs = [
+    doc if doc.get('kind') == 'ConfigMap' else coerce_ints(doc)
+    for doc in yaml.safe_load_all(content) if doc is not None
+]
 for doc in docs:
     if doc.get('kind') != 'ConfigMap':
         continue
@@ -58,9 +88,11 @@ for doc in docs:
 for doc in docs:
     print('---')
     print(yaml.dump(doc, default_flow_style=False, width=200), end='')
-" > "$TMPDIR/all.yaml"
+" > "$WORK_DIR/all.yaml"
 
-cp -r "$KUSTOMIZE_DIR/"* "$TMPDIR/"
+cp -rL "$KUSTOMIZE_DIR/." "$WORK_DIR/"
 
-cd "$TMPDIR"
-kustomize build .
+# kustomize's strategic-merge patch serializes null *int64 fields as the
+# YAML string "null" instead of true YAML null, which the API server rejects.
+kustomize build "$WORK_DIR" | \
+  sed 's/^\( *[a-zA-Z]*: \)"null"$/\1null/g'

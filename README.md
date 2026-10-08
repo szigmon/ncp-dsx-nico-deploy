@@ -189,6 +189,27 @@ bypasses — but Core exits without pools, so a config is always supplied:
 
 ### 7. Register a Site and Deploy Site-Agent
 
+> **Network prerequisite.** `deploy-site-agent` contacts Keycloak and the
+> REST API via their OpenShift route hostnames
+> (`keycloak-rhbk-operator.<domain>` and `nico-rest-api-nico-rest.<domain>`).
+> The machine running `make` must be able to resolve and reach those names.
+>
+> On clusters with a **LoadBalancer** ingress (ROSA, cloud-managed), wildcard
+> DNS is typically configured automatically and this works from any machine.
+>
+> On **HostNetwork** ingress clusters (bare-metal, NVL Launchpad), the router
+> runs on a node IP with no external DNS entry. Run the command from a bastion
+> on the lab network, or add `/etc/hosts` entries manually:
+>
+> ```bash
+> # Find the router node IP
+> oc get pods -n openshift-ingress -o wide
+>
+> # Add entries for the two routes needed (replace <ROUTER_IP> and <CLUSTER_DOMAIN>)
+> echo "<ROUTER_IP> keycloak-rhbk-operator.<CLUSTER_DOMAIN>" | sudo tee -a /etc/hosts
+> echo "<ROUTER_IP> nico-rest-api-nico-rest.<CLUSTER_DOMAIN>" | sudo tee -a /etc/hosts
+> ```
+
 ```bash
 make deploy-site-agent SITE_NAME=my-site
 ```
